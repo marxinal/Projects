@@ -1,0 +1,172 @@
+---
+title: "Playlist Classification Machine"
+author: "Jelena Kalinic"
+date: "03/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+knitr::opts_chunk$set(echo = FALSE)
+library(spotifyr)
+library(MASS)
+library(klaR)
+library(car)
+library(tidyverse)
+library(showtext)
+font_add_google("Fira Sans", "Fira Sans")
+showtext_auto()
+Sys.setenv(SPOTIFY_CLIENT_ID = 'ee306b30003944f5a22696089d06b64c')
+Sys.setenv(SPOTIFY_CLIENT_SECRET = '31f226ba27f84b92a7b7478771c1b265') # Super Secret please don't steal
+
+access_token <- get_spotify_access_token()
+
+Jazz <- get_playlist_audio_features("", "0mv3GzFNlDNo37hLBe9IoH")
+Pop <- get_playlist_audio_features("", "6GCkgqdhLhKJbuWjJPvvYY")
+Classical <- get_playlist_audio_features("", "0M4d5tVMa4G0iYq0dpPbgk")
+Rap <- get_playlist_audio_features("", "6QrsJIM204W4z306iWrNhb")
+Frenchcore <- get_playlist_audio_features("", "2TamnNMOkT1RZGfOOX1XL2")
+Synth <- get_playlist_audio_features("", "62eXlXm7DnT2t3i4h3iT9r")
+Anime <- get_playlist_audio_features("", "4XAccDSErLNtn0WZGkzm2N")
+Russ <- get_playlist_audio_features("", "6LvcvPC6l49iz6C9NtHBoc")
+
+Data <-
+  bind_rows(
+    Jazz %>% mutate(playlist = "Jazz"),
+    Pop %>% mutate(playlist = "Pop"),
+    Classical %>% mutate(playlist = "Classical"),
+    Frenchcore %>% mutate(playlist = "Frenchcore"),
+    Synth %>% mutate(playlist = "Synth"),
+    Anime %>% mutate(playlist = "Anime"),
+    Rap %>% mutate(playlist = "Rap"),
+    Russ %>% mutate(playlist = "Russian Turbo Polka")
+  ) 
+
+Data$playlist <- as.factor(Data$playlist)
+
+biotools::boxM(Data[, c(6:16, 37)], Data$playlist)
+
+Model <- lda(playlist ~ loudness + speechiness + acousticness + instrumentalness + 
+               tempo + liveness + mode + danceability + energy + key + valence + 
+               track.popularity, Data)
+
+ModelCV <- lda(playlist ~ loudness + speechiness + acousticness + instrumentalness + 
+                 tempo + liveness + mode + danceability + energy + key + valence + 
+                 track.popularity, Data, CV = TRUE)
+
+```
+
+## Outline
+
+## Linear Discrimination Plot
+
+```{r echo = FALSE}
+ModelProjection <- cbind(scale(as.matrix(Data[,c("loudness", "speechiness", 
+                                                 "acousticness", "instrumentalness",
+                                                 "tempo", "liveness", "mode", "danceability",
+                                                 "energy", "key", "valence",
+                                                 "track.popularity")]),scale=FALSE) %*% 
+                           Model$scaling, Data[,"playlist",drop=FALSE])
+
+ModelProjection %>%
+  ggplot(aes(LD1, LD2, colour = playlist)) +
+  scale_shape_manual(values = c(15:22)) +
+  geom_point(aes(shape = playlist)) +
+  labs(colour = "Playlist",
+       shape = "Playlist") +
+  theme(text = element_text(family = "Fira Sans")) +
+  guides(color = guide_legend(override.aes = list(size=4))) +
+  scale_color_brewer(palette="Set1")
+
+```
+
+
+## LOOCV Confusion Matrix
+
+```{r echo = FALSE}
+as.data.frame(table(Predicted = ModelCV$class, True = Data$playlist)) %>%
+  ggplot(aes(Predicted, True)) +
+  geom_tile(aes(fill = Freq)) + 
+  geom_text(aes(label = Freq), color = "grey20", family = "Fira Sans", ) +
+  scale_fill_gradient(low = "papayawhip", high = "deeppink1") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        text = element_text(family = "Fira Sans"),
+        legend.position = "none") +
+  theme_minimal()
+
+```
+
+
+## Model Evaluation
+
+```{r echo = FALSE}
+TP <- NULL
+FP <- NULL
+TN <- NULL
+FN <- NULL
+cats <- levels(Data$playlist)
+
+for (i in 1:length(cats)) {
+  TP[i] <- sum(cats[i] == ModelCV$class & cats[i] == Data$playlist)
+}
+
+for (i in 1:length(cats)) {
+  FP[i] <- sum(cats[i] == ModelCV$class & cats[i] != Data$playlist)
+}
+
+for (i in 1:length(cats)) {
+  TN[i] <- sum(cats[i] != ModelCV$class & cats[i] != Data$playlist)
+}
+
+for (i in 1:length(cats)) {
+  FN[i] <- sum(cats[i] != ModelCV$class & cats[i] == Data$playlist)
+}
+
+Sensitivity <- TP / (TP + FN)
+Specificity <- TN / (TN + FP)
+Precision <- TP / (TP + FP)
+NPV <- TN / (TN + FN)
+Accuracy <- (TP + TN) / (TP + TN + FP + FN)
+ModelAccuracy <- mean(ModelCV$class == Data$playlist)
+
+modEval <- data.frame("True Positives" = TP, "True Negatives" = TN,
+                      "False Positives" = FP, "False Negatives" = FN, 
+                      Sensitivity = paste(round(Sensitivity*100, 3), "%", sep = " "), 
+                      Specificity = paste(round(Specificity*100, 3), "%", sep = " "), 
+                      Precision = paste(round(Precision*100, 3), "%", sep = " "), 
+                      "Negative Predictive Value" = paste(round(NPV*100, 3), "%", sep = " "),
+                      Accuracy = paste(round(Accuracy*100, 3), "%", sep = " "), row.names = cats)
+
+modEval[,1:4]
+
+```
+
+## Model Evaluation Metrics
+
+```{r echo = FALSE}
+modEval[,5:9]
+
+```
+
+
+> The overall accuracy of the complete model is `r paste(round(ModelAccuracy*100, 3), "%", sep = " ")`
+
+
+## Predictions for my friend's playlist
+
+```{r echo = FALSE}
+Karel <- get_user_audio_features("1117862156", access_token)
+
+Karelpred <- predict(ModelCV, newdata = Karel)
+
+ggplot(as.data.frame(Karelpred), aes(x = class)) +
+  geom_bar(fill = "peachpuff2") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        text = element_text(family = "Fira Sans")) +
+  theme_minimal()
+
+```
