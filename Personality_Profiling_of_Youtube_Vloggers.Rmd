@@ -1,0 +1,797 @@
+---
+title: "Personality_Profiling_of_Youtube_Vloggers"
+author: "Jelena Kalinic"
+date: "11/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Calling the necessary libraries
+
+library(tidyverse) # metapackage with lots of helpful functions
+library(tidytext)
+library(dplyr)
+library(stringr)
+library(quanteda)
+
+# Input data files are available in the read-only "../input/" directory
+# For example, running this cell (by clicking ▶️, run or pressing Shift+Enter) will list 
+# all files under the "../input/" directory
+
+list.files(path = "../input")
+```
+
+```{r}
+directory_content <- list.files("../input/bda2021big5/youtube-personality", full.names = TRUE)
+print(directory_content)
+```
+
+```{r}
+# Path to the transcripts directory with transcript .txt files
+path_to_transcripts <- directory_content[2] 
+```
+
+```{r}
+# .csv filenames (see output above)
+AudioVisual_file    <- directory_content[3]
+Gender_file         <- directory_content[4]
+Personality_file    <- directory_content[5]
+
+```
+# 2. Data Import and Merging
+
+We'll import
+
+- Transcripts
+- Personality scores
+- Gender
+
+## 2.1 Importing transcripts
+
+```{r}
+transcript_files <- list.files(path_to_transcripts, full.names = TRUE) 
+
+print(head(transcript_files))
+
+```
+The transcript file names encode the vlogger ID that you will need for joining information from the different data frames. A clean way to extract the vlogger ID's from the names is by using the funcation `basename()` and removing the file extension ".txt".
+
+```{r}
+vlogId = basename(transcript_files)
+vlogId = str_replace(vlogId, pattern = ".txt$", replacement = "")
+head(vlogId)
+```
+To include features extracted from the transcript texts you will have to read the text from files and store them in a data frame. For this, you will need the full file paths as stored in `transcript_files`.
+
+```{r}
+transcripts_df = tibble(
+    
+    # vlogId connects each transcripts to a vlogger
+    vlogId=vlogId,
+    
+    # Read the transcript text from all file and store as a string
+    Text = map_chr(transcript_files, ~ paste(readLines(.x), collapse = "\\n")), 
+    
+    # `filename` keeps track of the specific video transcript
+    filename = transcript_files
+)
+
+transcripts_df %>% 
+    head(2)
+
+```
+## 2.2 Importing AudioVisual features
+audiovisual_df <- read_delim(AudioVisual_file, delim = " ")
+## 2.3 Import personality scores
+
+
+# Import the Personality scores
+```{r}
+pers_df = read_delim(Personality_file, delim = " ")
+head(pers_df)
+```
+## 2.4 Import gender
+```{r}
+gender_df <- read.delim(Gender_file, head = FALSE, sep = " ", skip = 2)
+```
+
+# Add column names
+```{r}
+names(gender_df) = c('vlogId', 'gender')
+head(gender_df)
+
+```
+### 2.4.1 Merging the `gender` and `pers` dataframes
+```{r}
+vlogger_df = left_join(gender_df, pers_df)
+head(vlogger_df) # VLOG8 has missing personality scores: those should be predicted
+```
+# 3. Tokenization of transcripts
+# Sentences
+```{r}
+tokenized_sentences <- transcripts_df %>%
+    unnest_tokens(sentence, Text, token = "sentences")
+```
+
+# Words with Stop Words
+```{r}
+tokenized_words <- transcripts_df %>%
+    unnest_tokens(token, Text, token = "words")
+```
+```{r}
+# Words without Stop Words
+stopwords <- get_stopwords()
+
+tokenized_no_stop_words <- transcripts_df %>%
+    unnest_tokens(token, Text, token = "words") %>%
+    anti_join(stopwords, by = c(token = "word"))
+
+```
+# 4. Feature extraction from transcript texts
+## 4.1 Features
+In this section we extract our features. For the first round we extracted 9 features: the number of times "um" "uhm" or "uh" is used, NRC, BING, intonation,the number of syllables, the number of questions, the number of swear words, the number of pauses, and the number of self-eference words. After the first round we decided to add five more features from other groups: the average number of characters in a sentence, AFINN, wMEI, the relative frequency of the words "I" and "we" and the frequency of negation.
+### Feature 1
+  #### Number of times the word "um" is used
+The first feature is the number of times the words "um", "uhm", and "uh" are used. These are so called filler words to avoid silences. Even though a direct relationship between the use of filler words could not be shown in earlier research (Laserna et al., 2014), they could still indicate difficulty finding words to say which might be related to for example introversion.
+```{r}
+nr_of_um <- tokenized_words %>%
+    group_by(vlogId) %>%
+    filter(token == "um" | token == "uhm" | token == "uh") %>%
+    count()
+
+# add vloggers with 0 counts
+um_feature <- left_join(tibble(vlogId), nr_of_um, copy = TRUE) %>% 
+    replace(is.na(.),0) %>%
+    rename(um_count = n)
+
+```
+### Feature 2
+#### NRC
+Our second feature is the NRC. The NRC is a large database that enables us to associate words with 8 common emotions, which are either negative or positive. How much each emotion occurs in a text might tell us something about the personality of the speaker. In earlier research sentiment analysis using NRC was shown to be an effective personality predictor (Christian et al. 2021).
+```{r}
+# Extracting NRC
+load_nrc <- function() {
+    if (!file.exists('nrc.txt'))
+        download.file("https://www.dropbox.com/s/yo5o476zk8j5ujg/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt?dl=1","nrc.txt")
+    nrc <- read.table("nrc.txt", col.names = c('word','sentiment','applies'), stringsAsFactors = FALSE)
+    nrc %>% filter(applies == 1) %>% 
+        select(-applies)
+}
+
+nrc <- load_nrc()
+
+nrc_feature <- tokenized_no_stop_words %>%
+    inner_join(nrc, by = c(token = "word")) %>%
+    count(vlogId, sort = TRUE, sentiment) %>%
+    group_by(vlogId) %>%
+    spread(sentiment, n, fill = 0) %>%
+    rename(positive_nrc = positive, negative_nrc = negative)
+
+```
+### Feature 3
+#### Bing
+Our third feature is Bing. Bing doesn't allow us to assign emotions to a word but it does let us classify words as positive or negative. The number of words in a text that are positive or negative might also tell us something about de personality of the speaker. Also since the distribution of postive and negative words is different in Bing than in NRC it seems sensible to use both.
+```{r}
+Extracting Bing 
+bing <- get_sentiments("bing")
+bing_feature <- tokenized_no_stop_words %>%
+    inner_join(bing, by = c(token = "word")) %>%
+    count(vlogId, sort = TRUE, sentiment) %>%
+    group_by(vlogId) %>%
+    spread(sentiment, n, fill = 0) %>%
+    rename(positive_bing = positive, negative_bing = negative)
+```
+
+### Feature 4 
+#### Intonation combined of 3 features 
+##### (pitch, energy, and average voiced segments or the syllable length)
+
+Our fourth feature is intonation. Earlier research showed that intonation can be a very effective predictor for personality, when accessed by humans (Mohammadi et al., 2012). This indicates that data about intonation might also be effective in predicting personality. We divided intonation into three variables: pitch, energy and average voiced segments or the syllable length which is based on a study that Aydin et al. (2016) conducted. 
+```{r}
+intonation_feature <- audiovisual_df %>%
+    select(vlogId, mean.pitch, mean.energy, avg.voiced.seg) %>%
+    group_by(vlogId)
+```
+### Feature 5 
+#### Speeach Feature
+##### Speaking time, speaking turns, and voicing rate
+Our fifth feature is the number of syllables that each vlogger uses. Earlier research has shown that this is an effective predictor for mainly agreeableness (Metha et al., 2020). Even though this study was on written text, this finding might also hold for speech. 
+
+```{r}
+speech_feature <- audiovisual_df %>%
+    select(vlogId, time.speaking, num.turns, voice.rate, avg.len.seg) %>%
+    group_by(vlogId)
+```
+### Feature 6 
+#### Counting the Syllables per VlogId
+Our sixth feature is the number of syllables that each vlogger uses. Earlier research has shown that this is an effective predictor for mainly agreeableness (Metha et al., 2020). Even though this study was on written text, this finding might also hold for speech. 
+download.file("https://bda2019syllables.netlify.com/en_syllable_3grams.csv.zip", "en_syllable_3grams.csv.zip") ## downloading the data base for syllables
+
+```{r}
+unzip("en_syllable_3grams.csv.zip")
+syldf <- read.csv("en_syllable_3grams.csv", check.names = FALSE, 
+                 stringsAsFactor = FALSE)
+
+nearZ <- syldf %>% caret::nearZeroVar() # removing syllables with near Zero Var
+syldf2 <- syldf[, -nearZ]
+
+new_syldf <- cor(syldf2[,-(1:2)]) # finding correlations among syllables above 0.9 and removing them
+high_r <- new_syldf %>%
+    caret::findCorrelation(cutoff = 0.9) + 2
+syldf3 <- syldf2[, -high_r]
+
+names(syldf3) = gsub("^$", " ", names(syldf3))
+
+fitlm <- lm(nsyl ~ . - word, syldf3)  # creating a linear model to predict the number of syllables with the remaining features
+round(coef(fitlm), 5)
+
+nsyl_est <- function(word, betas) {  # creating a function that counts the number of syllables with a given word and beta coef.
+   features = stringr::str_count(word, names(betas)[-1])
+   nsyl = betas[1] + features %*% betas[-1]
+   return(drop(nsyl))
+}
+
+
+hat_beta = coef(fitlm) 
+
+tokens <- tokenized_no_stop_words %>%  # singling out tokens(words) from the tokenized transcript and grouping by VlogId
+    select(token, vlogId) %>%
+    group_by(vlogId)
+
+
+count_syl <- numeric()  # counting the number of syllables for each word in the transcript
+for(i in 1:nrow(tokens)){
+    count_syl[i] <- nsyl_est(tokens[i,1], hat_beta)
+}
+
+
+syl_feature <- tokens %>%  # creating an output with rounded count of syllables per each VlogId
+    data.frame(round(count_syl)) %>%
+    rename(syl_count = round.count_syl.) %>%
+    group_by(vlogId) %>%
+    summarise(sum = sum(syl_count))
+
+
+```
+
+### Feature 7 
+####  Number of questions
+Our seventh feature is the number of questions in a vlog. Asking questions might for example be related to insecurity and thus introversion or to curiousness and thus opnenness to experience. 
+
+```{r}
+nr_questions <- tokenized_sentences %>%  
+    group_by(vlogId) %>%
+    mutate(end_sentence = str_sub(sentence, start = -1)) %>%
+    filter(end_sentence == "?") %>%
+    count()
+
+# add vloggers with 0 counts
+question_feature <- left_join(tibble(vlogId), nr_questions, copy = TRUE) %>% 
+    replace(is.na(.),0) %>%
+    rename(quest_count = n)
+
+```
+### Feature 8 
+#### Swear Words
+Our eigth feature is the number of swear words that is used. The study of Metha et al. 2020 also showed this was an effective predictor for agreeabless. Besides that it also intuitively makes sense that the number of swear words would predict agreeableness (the more swear words the lower agreeableness) and possibly other big five traits. 
+
+```{r}
+swear_words_url <- "http://www.bannedwordlist.com/lists/swearWords.txt"
+download.file(swear_words_url, destfile = "swear_words.txt") 
+swear_words <- tibble(read.table("swear_words.txt", 
+                                stringsAsFactor = FALSE, 
+                                sep = ","))
+
+swear_count_tbl <- tokenized_words %>%   
+  inner_join(swear_words, by = c(token = 'V1'))%>% # inner join matches pairs of observations when keys are equal
+  count(vlogId) %>%
+  group_by(vlogId) %>%
+  rename(swear_count = n) 
+
+# add vloggers with 0 counts
+swear_feature <- left_join(tibble(vlogId), swear_count_tbl, copy = TRUE) %>% 
+    replace(is.na(.),0)
+
+```
+### Feature 9 
+#### Number of pauses
+Our ninth feature is the number of pauses for each vlogger. Since there are a lot of ways pauses or silence can be used in speech Kostiuk (2012) so it might predict personality in different ways. However if there are a lot of pauses this likely indicates difficulty finding words which might be associated with introversion. 
+```{r}
+# counts each pause in a sentence once
+nr_pauses <- tokenized_sentences %>%
+    group_by(vlogId) %>%
+    mutate(sentence_with_pause = grepl("-", sentence)) %>%
+    count(sentence_with_pause) %>%
+    filter(sentence_with_pause == TRUE)
+
+# add vloggers with 0 counts
+pause_feature <- left_join(tibble(vlogId), nr_pauses, copy = TRUE) %>% 
+    replace(is.na(.),0) %>%
+    rename(pause_count = n) %>%
+    select(vlogId, pause_count)
+```
+### Feature 10 
+#### Self-Reference/"I" Words 
+Our tenth feature is the us of self-reference words. Self-reference words are associated with multiple personality traits so their use might be a good predictor for the Big Five. Earlier research showed for example an association between the use of the word "I" and neuroticism (Scully & Terry, 2011). 
+transcript_with_stop <- transcripts_df %>%
+    unnest_tokens(token, Text, token = "words")
+```{r}
+selfreference <- transcript_with_stop %>% 
+  filter(token == "i"  | token ==  "me" | token == "myself" | token == "i'm" | token == "mine" |
+           token == "my") %>%
+  group_by(vlogId) %>%
+  tally(name = 'selfwords') %>%
+  rename(self_count = selfwords) 
+
+# add vloggers with 0 counts
+selfreference_feature <- left_join(tibble(vlogId), 
+                                   selfreference, 
+                                   copy = TRUE) %>%
+    replace(is.na(.),0) 
+
+# which(selfreference_feature$self_count == 0)
+```
+### Feature 11 
+#### "We" Words Relative Frequency 
+```{r}
+we_reference <- transcript_with_stop %>% 
+  filter(token == "we"  | token ==  "we're" | token == "us" | token == "us" | token == "our" |
+           token == "ours" | token == "ourselves") %>%
+  group_by(vlogId) %>%
+  tally(name = 'we_words') %>%
+  rename(we_count = we_words) 
+
+
+# add vloggers with 0 counts
+we_feature <- left_join(tibble(vlogId), we_reference, copy = TRUE) %>%
+    replace(is.na(.),0) 
+
+# which(we_feature$we_count == 0)
+```
+### Feature 12 
+#### Average Number of characters in a sentence
+```{r}
+char_len_feature <- tokenized_sentences %>%
+    mutate(nr_char = nchar(sentence)) %>%
+    group_by(vlogId) %>%
+    summarize(avg_char_len = mean(nr_char))
+
+```
+### Feature 13 
+####  AFINN 
+```{r}
+download.file("http://www2.imm.dtu.dk/pubdb/edoc/imm6010.zip","afinn.zip")
+ unzip("afinn.zip")
+ afinn = read.delim("AFINN/AFINN-111.txt", sep="\t", col.names = c("word","score"), 
+                   stringsAsFactors = FALSE)
+
+afinn_feature <- tokenized_words %>%
+    inner_join(afinn, by = c(token = 'word')) %>%
+    group_by(vlogId) %>%
+    summarise (afinn_mean = mean(score)) 
+
+```
+### Feature 14
+####  wMEI 
+```{r}
+wMEi_feature <- audiovisual_df %>% 
+                        select(vlogId, hogv.entropy, hogv.median, 
+                                 hogv.cogR, hogv.cogC)
+
+```
+### Feature 15 
+####  "We" relative frequency
+```{r}
+# count total number of words
+count_words <- tokenized_words %>%
+  count(vlogId) %>%
+  rename(total_words = n)
+
+count_i <- tokenized_words %>%
+  filter(token == "i" |
+         token == "i'm" |
+         token == "me" |
+         token == "my" |
+         token == "mine" |
+         token == "myself") %>%
+  count(vlogId) %>% 
+  rename(total_i = n)
+
+count_we <- tokenized_words %>%
+  filter(token == "we" |
+         token == "we're" |
+         token == "us" |
+         token == "our" |
+         token == "ours" |
+         token == "ourselves") %>%
+  count(vlogId) %>% 
+  rename(total_we = n)
+
+i_we_feature <- count_words %>% 
+  full_join(count_i,  by = "vlogId") %>%
+  full_join(count_we, by = "vlogId") %>%
+  replace_na(list(total_i = 0, total_we = 0)) %>%
+  mutate(freq_i = total_i / total_words,
+         freq_we = total_we / total_words,) %>% 
+  select(vlogId, freq_i, freq_we)
+```
+### Feature 16 
+#### Negation frequency
+```{r}
+negation_url <- "https://www.grammarly.com/blog/negatives/"
+negation_words <- readLines(negation_url)[63:89] %>%
+  str_replace("<li>", "") %>% 
+  str_replace("</li>", "") %>%
+  tibble(word = .) %>%
+  filter(!grepl(" ", word),
+         !grepl("<", word),
+         word != "") %>% 
+  mutate(word = str_to_lower(word))
+
+
+negation_feature <- tokenized_words %>%
+  filter(token %in% negation_words$word) %>%
+  count(vlogId) %>%
+  full_join(count_words, by = "vlogId") %>%
+  replace_na(list(n = 0)) %>%
+  mutate(negation_freq = n / total_words) %>%
+  select(vlogId, negation_freq)
+```
+### Feature 17 
+### Mean Word Count Per Sentence
+```{r}
+tokenized_sentences$n_words_sent <-
+  ntoken(x = tokenized_sentences$sentence,
+         remove_punct = TRUE)
+
+# Calculate the average amount of words per sentence per vlog
+mean_word_per_sentence_feature <- 
+    tokenized_sentences %>%
+    group_by(vlogId) %>%
+    summarise(mean_n_words = mean(n_words_sent)) 
+```
+# 5. Computing the features data frame
+```{r}
+transcript_features_df <- tibble(vlogId) %>%
+    left_join(bing_feature) %>%
+    left_join(intonation_feature) %>%
+    left_join(syl_feature) %>%
+    left_join(nrc_feature) %>%
+    left_join(um_feature) %>%
+    left_join(question_feature) %>%
+    left_join(pause_feature) %>%
+    left_join(selfreference_feature) %>%
+    left_join(afinn_feature) %>%
+    left_join(char_len_feature) %>%
+    left_join(wMEi_feature) %>%
+    left_join(i_we_feature) %>%
+    left_join(negation_feature) %>% 
+    left_join(swear_feature) %>%
+    left_join(we_feature) %>%
+    left_join(mean_word_per_sentence_feature) %>%
+    left_join(speech_feature)
+
+head(transcript_features_df)
+any(is.na(transcript_features_df))
+```
+# 6. Checking for Correlation and Near Zero Variances among predictors
+```{r}
+near_zero <- caret::nearZeroVar(transcript_features_df)
+
+# There are no variables found that have near zero variation
+
+glimpse(near_zero) 
+
+# Check if there are highly correlated features 
+
+library(caret)
+library(dplyr)
+total_correlation_matrix <- cor(transcript_features_df[,-1]) 
+high_total_r <- total_correlation_matrix %>%
+    findCorrelation(cutoff = 0.9) + 1 
+
+glimpse(high_total_r)
+
+# Omit missing values
+final_features <- transcript_features_df[-high_total_r]
+
+our_df <- vlogger_df %>% 
+    left_join(final_features)
+head(our_df)
+```
+# 7. Model Selection
+## 7.1 Inflexible Models
+### 7.1.1 Overall Predictive Model
+
+```{r}
+colnames(our_df)
+
+fit_our_ml <- lm(cbind(Extr, Agr, Cons, Emot, Open) ~ gender + anger + anticipation + 
+                         disgust + fear + joy + sadness + surprise + trust + positive_bing + 
+                         negative_bing + um_count + quest_count + pause_count + mean.pitch + 
+                         mean.energy + avg.voiced.seg + self_count + we_count + afinn_mean + avg_char_len +
+                         hogv.entropy + hogv.median + hogv.cogR + hogv.cogC + freq_i + freq_we + 
+                         negation_freq + swear_count + time.speaking + num.turns + voice.rate + avg.len.seg, 
+                         data = our_df)
+```
+### 7.1.2 Model Selection
+```{r}
+# Extraversion 
+startmod_Extr <- lm(Extr ~ 1, data = our_df[,-c(1,4:7)])
+fullmod_Extr <- lm(Extr ~., data = our_df[,-c(1,4:7)])
+
+# stepwise regression
+both_Extr <- MASS::stepAIC(fullmod_Extr, direction = "both", trace = FALSE)
+
+# forward regression
+forward_Extr <- MASS::stepAIC(startmod_Extr, 
+                              scope = list(upper = fullmod_Extr), 
+                              direction = "forward", trace = FALSE)
+
+# Fit Extraversion with chosen predictors 
+
+summary(both_Extr) #stepwise
+summary(forward_Extr) #forward
+
+# Anova table of the stepwise regression for Extraversion
+
+both_Extr$anova
+forward_Extr$anova
+
+```
+```{r}
+# Agreeableness
+startmod_Agr <- lm(Agr ~ 1, data = our_df[, -c(1, 3, 5:7)])
+fullmod_Agr <- lm(Agr ~., data = our_df[, -c(1, 3, 5:7)])
+
+# stepwise regression
+
+both_Agr <- MASS::stepAIC(fullmod_Agr, direction = "both", trace = FALSE)
+
+# forward regression
+forward_Agr <- MASS::stepAIC(startmod_Agr, 
+                              scope = list(upper = fullmod_Agr), 
+                              direction = "forward", trace = FALSE)
+
+# Agreeableness with chosen predictions 
+
+summary(both_Agr)
+summary(forward_Agr)
+
+# Anova table of the stepwise regression for Agreeableness
+
+both_Agr$anova
+forward_Agr$anova
+```
+```{r}
+# Openness
+
+startmod_Open <- lm(Open ~ 1, data = our_df[, -c(1, 3:6)])
+fullmod_Open <- lm(Open ~., data = our_df[, -c(1, 3:6)])
+
+# stepwise regression
+
+both_Open <- MASS::stepAIC(fullmod_Open, direction = "both", trace = FALSE)
+
+# forward regression
+forward_Open <- MASS::stepAIC(startmod_Open, 
+                              scope = list(upper = fullmod_Open), 
+                              direction = "forward", trace = FALSE)
+
+# Openness with chosen predictions
+
+summary(both_Open)
+summary(forward_Open)
+
+# Anova table of the stepwise regression for Openness
+
+both_Open$anova
+forward_Open$anova
+```
+```{r}
+# Conscientiousness
+startmod_Cons <- lm(Cons ~ 1, data = our_df[, -c(1, 3:4, 6:7)])
+fullmod_Cons <- lm(Cons ~., data = our_df[, -c(1, 3:4, 6:7)])
+
+# stepwise regression
+both_Cons <- MASS::stepAIC(fullmod_Cons, direction = "both", trace = FALSE)
+
+# forward regression
+forward_Cons <- MASS::stepAIC(startmod_Cons, 
+                              scope = list(upper = fullmod_Cons), 
+                              direction = "forward", trace = FALSE)
+
+# Conscientiousness with chosen predictors
+
+summary(both_Cons)
+summary(forward_Cons)
+
+# Anova table of the stepwise regression for Conscientiousness
+
+both_Cons$anova
+forward_Cons$anova
+```
+```{r}
+# Neuroticism
+
+startmod_Emot <- lm(Emot ~ 1, data = our_df[, -c(1, 3:5, 7)])
+fullmod_Emot <- lm(Emot ~., data = our_df[, -c(1, 3:5, 7)])
+
+# forward regression
+
+both_Emot <- MASS::stepAIC(fullmod_Emot, direction = "both", trace = FALSE)
+
+# forward regression
+
+forward_Emot <- MASS::stepAIC(startmod_Emot, 
+                              scope = list(upper = fullmod_Emot), 
+                              direction = "forward", trace = FALSE)
+# Neuroticism with chosen predictors 
+
+summary(both_Emot)
+summary(forward_Emot)
+
+# Anova table of the stepwise regression for Neuroticism
+
+both_Emot$anova
+forward_Emot$anova
+```
+### 7.1.3 Combined Model based on Model Selection
+
+## 7.2 Flexible Models
+**Non-linear Transformations of the Predictors**
+```{r}
+# Extraversion
+forward_Extr2 <- lm(formula = Extr ~ hogv.entropy + I(hogv.entropy^2) + 
+                    quest_count + um_count + I(um_count^2) + joy + 
+                    I(joy^2) + mean.pitch + sadness + mean.energy + 
+                    I(time.speaking^2) + time.speaking + hogv.median + 
+                    hogv.cogR + anger, data = our_df[, -c(1, 4:7)])
+summary(forward_Extr2)
+# Agreeableness 
+
+forward_Agr2 <- lm(formula = Agr ~ afinn_mean + I(afinn_mean^2) + 
+                   swear_count + I(swear_count^2) + gender + I(gender^2) +
+                   negation_freq + I(negation_freq^2) + anger + hogv.cogC + 
+                   freq_i + surprise + pause_count + we_count, 
+                   data = our_df[, -c(1, 3, 5:7)])
+
+summary(forward_Agr2)
+# Openness
+forward_Open2 <- lm(formula = Open ~ hogv.median + I(hogv.median^2) + time.speaking +
+                    swear_count + joy + I(joy^2) + um_count + surprise + gender, 
+                    data = our_df[, -c(1, 3:6)])
+
+
+summary(forward_Open2)
+# Conscientiousness
+forward_Cons2 <- lm(formula = Cons ~ time.speaking + I(time.speaking^2) + swear_count + 
+                    freq_i + hogv.entropy + hogv.cogC + voice.rate + negation_freq + 
+                    trust + negative_bing + fear + anger,
+                    data = our_df[, -c(1, 3:4, 6:7)])
+
+
+summary(forward_Cons2)
+# Neuroticism
+forward_Emot2 <- lm(formula = Emot ~ afinn_mean + I(afinn_mean^2) + 
+                    swear_count + I(swear_count^2) +  I(negation_freq^2) + 
+                    negation_freq + time.speaking + 
+                    hogv.cogR + hogv.cogC, 
+                    data = our_df[, -c(1, 3:5, 7)])
+
+summary(forward_Emot2)
+```
+```{r}
+# 8. Performance Tables
+best_total_ml <- tibble(Extr = summary(fit_our_ml)[[1]]$r.squared,
+                          Agr = summary(fit_our_ml)[[2]]$r.squared,
+                          Cons = summary(fit_our_ml)[[3]]$r.squared,
+                          Emot = summary(fit_our_ml)[[4]]$r.squared,
+                          Open = summary(fit_our_ml)[[5]]$r.squared)
+
+
+best_both_ml <- tibble(Extr = summary(both_Extr)$r.squared,
+                         Agr = summary(both_Agr)$r.squared, 
+                         Cons = summary(both_Cons)$r.squared,
+                         Emot = summary(both_Emot)$r.squared,
+                         Open = summary(both_Open)$r.squared)
+
+best_forward_ml <- tibble(Extr = summary(forward_Extr)$r.squared,
+                         Agr = summary(forward_Agr)$r.squared, 
+                         Cons = summary(forward_Cons)$r.squared,
+                         Emot = summary(forward_Emot)$r.squared,
+                         Open = summary(forward_Open)$r.squared)
+
+best_transformed_ml <- tibble(Extr = summary(forward_Extr2)$r.squared,
+                              Agr = summary(forward_Agr2)$r.squared, 
+                              Cons = summary(forward_Cons2)$r.squared,
+                              Emot = summary(forward_Emot2)$r.squared,
+                              Open = summary(forward_Open2)$r.squared)
+
+
+best_total_ml
+best_both_ml
+best_forward_ml
+best_transformed_ml
+```
+###### The overall model still shows the highest explained variance, so we decided to use that for our final predictions. 
+
+# Final model
+```{r}
+### Total Model including all predictors and outcome variables according to stepwise regression
+fit_our_ml <- lm(cbind(Extr, Agr, Cons, Emot, Open) ~ gender + anger + anticipation + 
+                         disgust + fear + joy + sadness + surprise + trust + positive_bing + 
+                         negative_bing + um_count + quest_count + pause_count + mean.pitch + 
+                         mean.energy + avg.voiced.seg + self_count + we_count + afinn_mean + avg_char_len +
+                         hogv.entropy + hogv.median + hogv.cogR + hogv.cogC + freq_i + freq_we + 
+                         negation_freq + swear_count + time.speaking + num.turns + voice.rate + avg.len.seg, 
+                         data = our_df)
+```
+# 9. Making predictions on the test set
+
+## 9.1 The test set
+
+```{r}
+#testset_vloggers = vlogger_df %>% 
+#    filter(is.na(Extr))
+
+#head(testset_vloggers)
+##########
+testset_vloggers = our_df %>% 
+    filter(is.na(Extr))
+
+head(testset_vloggers)
+## 9.2 Predictions
+```
+
+# Compute output data frame
+```{r}
+testset_pred = testset_vloggers %>% 
+    mutate(
+        Extr = pred_mlm[,'Extr'], 
+        Agr  = pred_mlm[,'Agr' ],
+        Cons = pred_mlm[,'Cons'],
+        Emot = pred_mlm[,'Emot'],
+        Open = pred_mlm[,'Open']
+    ) %>%
+    select(vlogId, Extr:Open)
+
+head(testset_pred)
+```
+
+## 9.3 Writing predictions to file
+```{r}
+testset_pred_long  <- 
+  testset_pred %>% 
+  gather(pers_axis, Expected, -vlogId) %>%
+  arrange(vlogId, pers_axis)
+
+head(testset_pred_long)
+# Obtain the right format 
+testset_pred_final <- 
+  testset_pred_long %>%
+  unite(Id, vlogId, pers_axis) 
+
+# Check if we succeeded
+head(testset_pred_final)
+
+# Write to csv
+testset_pred_final %>%
+  write_csv(path = "predictions.csv")
+
+# Check if the file was written successfully.
+list.files()
+```
+# References
+
+Christian, H., Suhartono, D., Chowanda, A., & Zamli, K. Z. (2021). Text based personality prediction from multiple social media data sources using pre-trained language model and model averaging. Journal of Big Data, 8(1). https://doi.org/10.1186/s40537-021-00459-1
+Lee, C. H., Kim, K., Seo, Y. S., & Chung, C. K. (2007). The Relations Between Personality and Language Use. The Journal of General Psychology, 134(4), 405–413. https://doi.org/10.3200/genp.134.4.405-414
+Laserna, C. M., Seih, Y. T., & Pennebaker, J. W. (2014). Um . . . Who Like Says You Know. Journal of Language and Social Psychology, 33(3), 328–338. https://doi.org/10.1177/0261927x14526993
+Mehta, Y., Fatehi, S., Kazameini, A., Stachl, C., Cambria, E., & Eetemadi, S. (2020). Bottom-Up and Top-Down: Predicting Personality with Psycholinguistic and Language Model Features. 2020 IEEE International Conference on Data Mining (ICDM). Published. https://doi.org/10.1109/icdm50108.2020.00146
+Scully, I. D., & Terry, C. P. (2011). Self-Referential Memory for the Big-Five Personality Traits. Psi Chi Journal of Psychological Research, 16(3), 123–128. https://doi.org/10.24839/1089-4136.jn16.3.123
+
+
