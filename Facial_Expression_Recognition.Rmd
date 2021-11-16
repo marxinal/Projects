@@ -1,0 +1,630 @@
+---
+title: Facial Expression Recognition
+output: html_document
+---
+
+# Facial Expression Recognition 
+
+# 1. Setting the Working Environment
+
+## Loading Libraries 
+
+```{r}
+## Importing packages
+
+library(tidyverse) # metapackage with lots of helpful functions
+library(png) # package that can be used to read png image files in a simple format
+library(ggplot2)
+library(dplyr)       # for data wrangling
+library(e1071)       # for calculating variable importance
+library(caret)       # for general model fitting
+library(rpart)       # for fitting decision trees
+library(ipred)       # for fitting bagged decision trees
+require(ranger)
+
+KAGGLE_RUN = TRUE
+```
+
+## Importing Data
+
+```{r}
+# Show the availabe directories
+# Reading in files
+# You can access files the "../input/" directory.
+# You can see the files by running  
+
+if (KAGGLE_RUN){
+  list.files(path = "../input/")
+  dirs = dir("../input", pattern="[^g]$", recursive=TRUE, include.dirs = TRUE, full.names = TRUE)
+} else {
+  dirs = dir(pattern="[^g]$", recursive=TRUE, include.dirs = TRUE, full.names = TRUE)
+}
+```
+
+```{r}
+# Get all image files: file names ending ".png" 
+anger   = dir(grep("anger",   dirs, value = TRUE), pattern = "png$", full.names = TRUE)
+disgust = dir(grep("disgust", dirs, value = TRUE), pattern = "png$", full.names = TRUE)
+happy   = dir(grep("happy",   dirs, value = TRUE), pattern = "png$", full.names = TRUE)
+sad     = dir(grep("sad",     dirs, value = TRUE), pattern = "png$", full.names = TRUE)
+test_im = dir(grep("test",    dirs, value = TRUE), pattern = "png$", full.names = TRUE)
+
+str(anger)
+str(disgust)
+str(happy)
+str(sad)
+str(test_im)
+```
+
+Next we get the image files. The pictures (video stills) show faces that were captured while more or less spontaneously expressing an emotion. Some of the images are repeated, but then shifted, rotated, or both. Not all are easy to classify:
+
+```{r}
+ok = file.copy(  happy[60], "happy.png", overwrite = TRUE)
+ok = file.copy(    sad[61],   "sad.png", overwrite = TRUE)
+ok = file.copy(  anger[61], "anger.png", overwrite = TRUE)
+ok = file.copy(disgust[61], "disgust.png", overwrite = TRUE)
+IRdisplay::display_html('<img src="happy.png" width="200" style="float:left" /><img src="sad.png" width="200" style="float:left" /><img src="anger.png" width="200" style="float:left" /><img src="disgust.png" width="200" style="float:left" />')
+```
+
+Clearly the first is a happy face, but is the second a sad face, an angry face, or both?
+From inspecting the images, we could come up with a somewhat vague prediction for our algorithm. Namely, even to the human eye it seems so that a happy face is easiest to distingusih and label from the other facial expressions. For instance, it is noticeable that when a person smiles there are different contours and characteristics around both the eyes (half-closed eyes with upward and somewhat relaxed-looking eyebrows) and the mouth (e.g. an open smile although not necessarily) that are quite different to other facial expressions. This indicates that since it is by far the easiest for humans to classify a happy facial expression, we could argue the same will be the case for our algorithm. 
+
+
+# 2. Data considerations
+
+It's not difficult to find out how the data were collected. This is an important question to answer about any data set you use in a machine learning project because it will determine to what new data your model will generalize.
+
+Answer the 3 most important questions for any ML project:
+
+**1. Where do the data come from? (To which population will results generalize?)**
+   The data came from the CK+ dataset. The obtained results from this statistical analysis will generalize to black & white photos representative of four emotions. Those are sadness, happiness, disgust, and anger. When taking into consideration the actual generalizability of the data, it is arguable that this dataset will not be able to generalize well to children and infants, but also other non Euro-American faces. The reason being that 81% of the dataset contains only Euro-American faces, and only 13% Afro-American and 6% other groups. Likewise, only adult faces were used for training purposes, in particular pariticipants were 18 to 50 years of age (Lucey, et al., 2010).
+   
+
+**2. What are candidate machine learning methods? (models? features?)**
+     Possible machine learning algorithms could be QDA, LDA, KNN, Multinomial Regression, Random Forrest, Ridge and Lasso regression. Some of them were used here, and some were left out due to high computational (CPU and RAM) demands. 
+
+**3. What is the Bayes' error bound? (Any guestimate from scientific literature or web resources?)**
+    Literature suggests that Facial Recognition Algorithms can reach almost perfection with a 99.97% accuracy rate. Derived from: https://www.csis.org/blogs/technology-policy-blog/how-accurate-are-facial-recognition-systems-–-and-why-does-it-matter
+   Whereas, if looking specifically at recognizing one of the four aforementioned emotions, Mollahosseini et al. (2016), suggests the inter rater reliability for recognition is 79.6% for happines, 69.7% for saddness, 67.6% for disgust, and 62.3% anger among in total 11 facial expressions.
+   So taken together, our Bayes' error bound should probably be somewhere around 85-90% for the present dataset. 
+
+
+####  References
+
+Mollahosseini, Ali, David Chan, and Mohammad H. Mahoor. "Going deeper in facial expression recognition using deep neural networks." 2016 IEEE Winter conference on applications of computer vision (WACV). IEEE, 2016.
+
+P. Lucey, J. F. Cohn, T. Kanade, J. Saragih, Z. Ambadar and I. Matthews (2010). The Extended Cohn-Kanade Dataset (CK+): A complete dataset for action unit and emotion-specified expression. IEEE Computer Society Conference on Computer Vision and Pattern Recognition - Workshops, San Francisco, CA, 2010, pp. 94-101, doi: 10.1109/CVPRW.2010.5543262.
+
+# 3. Combining Everything into a Dataframe (Training Set)
+
+```{r}
+# Combine all filenames into a single vector
+train_image_files = c(anger, happy, sad, disgust)
+
+# Read in the images as pixel values (discarding color channels)
+X = sapply(train_image_files, function(nm) c(readPNG(nm)[,,1])) %>% t()
+y = c(rep("anger", length(anger)), rep("happy", length(happy)), rep("sad", length(sad)), rep("disgust", length(disgust)))
+
+X_test = sapply(test_im, function(nm) c(readPNG(nm)[,,1])) %>% t()
+
+
+# Change row and column names of X to something more managable
+rownames(X)      = gsub(".+train/", "", rownames(X))
+rownames(X_test) = gsub(".+test/",  "", rownames(X_test))
+
+colnames(X) = colnames(X_test) = paste("p",1:ncol(X), sep="")
+
+# Check result (are X, X_test, and y what we expect)
+# X[1:6,20:23] %>% print
+table(y)
+                
+#X_test[1:6,20:23] %>% print
+```
+
+```{r}
+# Visualization utility function
+as_image = function(x, nr=sqrt(length(x))) {opar=par(mar=rep(0,4)); on.exit(par(opar)); image(t(matrix(x,nr))[,nr:1], col = gray(0:255/255),axes=F)}
+
+options(repr.plot.width=4, repr.plot.height=4)
+as_image(X[13,])
+as_image(X_test[13,])
+```
+
+# 4. Features Used to Classify and Analyze Images
+
+We decided to convert the pixel intensities into histograms, and compute features. As this would provide more information on the pictures. The features are:
+
+## Histogram features:
+
+Similar to what we did with signals, here we use histograms of pixel intensities to compute useful features. Here we mostly focus on histogram edges, in particular vertical, horizontal and diagonal. But also: 
+
+1. Averages (features that capture a specific region of histogram or descriptives): 
+* Mean 
+* Mode 
+* Median
+* Standard Deviation
+* Variance
+
+2. Distributional measures (specific shapes of histogram): 
+* Range 
+* Quartiles (25% Quartile Ranges, 75% Quartile Ranges)
+* Kurtosis: This measure describes the specific shape of a particular histogram where this shape is identified             by measuring the peakedness of the histogram. If it's a normal distribution the peakedness is 3,               which means that the most values are in and around the middel of the distribution. If it is not               normal distributed the peakedness of the histogram, ans thus the most values are in the sides.
+* Skewness: Skewness is measured by identifying assymmetry of a particular histogram. The histogram is                     balanced when there is zero-value. It is on the left tail when it is negative, and it is on the               right tail when it is positive.
+* Median Absolute Deviation (MAD):The absolute average distance between the mean and every data point.
+
+3. Spectral-inspired features:
+* Power: The power is the probability that the test will find a statistically significant difference between            the amplitude of the signals. Where it reflects the variance of the amplitude of the signals as well          as the squared mean summed.
+* Energy: The energy is a measure the localized change of the image. Source:          https://stackoverflow.com/questions/4562801/what-is-energy-in-image-processing
+* Full L amplitude: Each point at every (x,y) is called amplitude or intensity of an image. Amplitude image shows how the tip deflected as it encountered sample surface. Images are similar to topography showing the map of the slope of the sample, but Z scale is no in linear units. Using other words, amplitude image is the image of error signal of amf. Source: https://findanyanswer.com/what-is-amplitude-in-image-processing
+* Crest factor: Crest factor is a parameter of a waveform, such as alternating current or sound, showing the ratio of peak values to the effective value. In other words, crest factor indicates how extreme the peaks are in a waveform. As such can also be used for analysing histograms of pixel intensity. 
+* Spectral peak: The function spectrum() gives an estimation of the spectrum of a function. In order to be able to derive information about the nature of the function and more about the pixels, we estimated statistical features on the spectrum features. In particular we included spectral peak as our feature.
+
+4. Other strategies:
+
+* Using edge coordinates (horizontal, vertical, and diagonal)
+
+Getting things ready:
+
+```{r}
+options(repr.plot.width=4*4, repr.plot.height=4)
+
+# Compute edges by differencing neighboring pixels
+im = matrix(X[756,],48)
+h_edge = im[-1,] - im[-48,] # horizontal
+v_edge = im[,-1] - im[,-48] # vertical
+d_edge = h_edge[,-1] - h_edge[,-48] # diagonal
+
+# Specify a threshold (hand tuned here on visual result)
+threshold = .0625 
+layout(t(1:4))
+as_image(im)
+as_image(h_edge < threshold,   47); mtext("horizontal edge pixels")
+as_image(v_edge < threshold,   48); mtext("vertical edge pixels")
+as_image(d_edge < threshold/2, 47); mtext("diagonal edge pixels")
+#as_image((h_edge[,-1] < 0.1) & (v_edge[-1,] < 0.1), 47); mtext("edge pixels")
+```
+
+```{r}
+# Load FreySlateFeatures function 
+source("https://bit.ly/32um24j")
+
+FreySlateFeatures(h_edge < threshold)
+```
+
+## Creating Edge Features:
+
+```{r}
+# Code courtesy: Group 10 from BDA competition 2021 (adjusted and copied)
+
+edge_features <- function(X) {
+    
+  # Function to compute edge histogram features
+  FeaturesH = tibble()
+  FeaturesV = tibble()
+  FeaturesD = tibble()
+  n_edge    = tibble()
+  
+  # Specify a threshold to determine edge pixel
+  threshold = .0625  
+  
+  # Create loop for histogram features seen above:
+  for (i in 1:nrow(X)) {
+    im = matrix(X[i, ], 48)
+    h_edge = im[-1, ] - im[-48, ] # horizontal
+    v_edge = im[, -1] - im[, -48] # vertical
+    d_edge = h_edge[, -1] - h_edge[, -48] # diagonal
+    
+    n_edge[i, 1] <-
+      sum(h_edge < threshold) # The total number of edge pixels
+    n_edge[i, 2] <- sum(v_edge < threshold)
+    n_edge[i, 3] <- sum(d_edge < threshold)
+    
+    FeaturesH <-
+      bind_rows(FeaturesH, FreySlateFeatures(h_edge < threshold))
+    FeaturesV <-
+      bind_rows(FeaturesV, FreySlateFeatures(v_edge < threshold))
+    FeaturesD <-
+      bind_rows(FeaturesD, FreySlateFeatures(d_edge < threshold))
+    
+  }
+  
+  # Change colnames of the data frames
+  colnames(FeaturesH) <- paste("H", colnames(FeaturesH), sep = "_")
+  colnames(FeaturesV) <- paste("V", colnames(FeaturesV), sep = "_")
+  colnames(FeaturesD) <- paste("D", colnames(FeaturesD), sep = "_")
+  colnames(n_edge) <- c("n_H_edge", "n_V_edge", "n_D_edge")
+  
+  
+  Features <- X %>%
+    cbind(FeaturesH) %>%
+    cbind(FeaturesV) %>%
+    cbind(FeaturesD) %>%
+    cbind(n_edge)
+  
+  return(Features)
+}
+```
+
+### Plotting the pixel vectors
+
+```{r}
+plot(X[13, ], type = "l")
+plot(X_test[13, ], type = "l")
+
+# Combine X and X_test into a single tibble to compute features
+image_data <- as_tibble(X, rownames = "id") %>%
+  bind_rows(as_tibble(X_test, rownames = "id")) %>%
+  # Reorder columns to have id and outcome at the front
+  # (in order to not forget about them)
+  select(id, everything())
+
+# Check
+head(image_data)
+```
+
+## Transforming the Data in the Long Format
+
+```{r}
+# Transform images data into long format to compute the spectral features as competition 2
+images_data_long <- image_data %>%
+  pivot_longer(-id, names_to = "px_pos", values_to = "px_value")
+
+# View new data
+images_data_long %>% head()
+```
+
+### Creating some Pre-functions:
+* Mode: This function computes the mode of the individual histogram pixel intensity.
+* Peak: This function computes the spectral peak of the individual histogram pixel intensity.
+* Entropy: This function computes the entropy, or the surprise factor, of the individual histogram pixel intensity.
+
+```{r}
+# Function to get the mode
+mode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# Function to get the spectral peak
+peak <- function(x) {
+  spec <- spectrum(x, plot = FALSE)
+  return(spec$freq[which.max(spec$spec)])
+}
+
+# Function to ge the entropy
+# entropy  <- function(px_value, nbreaks = nclass.Sturges(x)) {
+   # image_pixels %>%
+   # group_by(id) %>%
+   # r = range(px_value)
+   # x_binned = findInterval(px_value, seq(r[1], r[2], len= nbreaks))
+   # h = tabulate(x_binned, nbins = nbreaks) # fast histogram
+   # p = h/sum(h)
+   # -sum(p[p>0] * log(p[p>0]))
+#}
+
+# Function for entropy was too computationally expensive, thus was commented out 
+```
+
+### Creating Functions for Histogram Features:
+
+```{r}
+# Obtained some code from various sources from the Physical activity competition: # Sensor signal 9 group
+
+# Function to compute spectral features 
+compute_hist_features <- function (image_pixels) {
+  image_pixels %>%
+    group_by(id) %>%
+    summarise(
+        
+      # MEAN
+      mean = mean(px_value),
+        
+      # MODE
+      mode = mode(px_value),   
+        
+      # MEDIAN
+      median = median(px_value),    
+        
+      # STANDARD DEVIATION
+      sd = sd(px_value),
+        
+      # VARIANCE
+      var = var(px_value), 
+          
+      # POWER
+      power = mean(px_value^2),
+        
+      # 25% QUARTILE (RANGE)
+      q1_25_px_value = quantile(px_value, .25),
+        
+      # 75% QUARTILE (RANGE)
+      q3_75_px_value = quantile(px_value, .75),
+        
+      # SKEWNESS
+      skew = e1071::skewness(px_value),
+        
+      # KURTOSIS
+      kurt = e1071::kurtosis(px_value),
+         
+      # SPECTRAL PEAK
+      peak = peak(px_value),
+        
+      # ENERGY
+      energy = sum(px_value^2), 
+        
+      # RANGE
+      range = max(px_value) - min(px_value), 
+        
+      # FULL L AMPLITUDE
+      amplitude = sum(abs(px_value - mean)),
+        
+      # CREST FACTOR 
+      crest = max(px_value)/(sqrt(mean^2)), 
+        
+      # MEDIAN ABSOLUTE DEVIATION (MAD)
+      mad = median(abs(px_value - median)),
+    )
+}
+```
+
+# 5. Finalizing Training Set Dataframe 
+
+## Making our Training Set Dataframe of Previously Created Features
+
+```{r}
+hist_features <- compute_hist_features(images_data_long)
+
+# Check
+head(hist_features)
+```
+
+## Finalizing Training Dataset
+
+```{r}
+X_train <- X %>% 
+    edge_features() %>%
+    as_tibble(rownames = "id") %>%
+    left_join(hist_features, by = "id") %>%
+    select(- id)
+
+# Check result
+X_train[1:6,2348:2358] %>% print
+dim(X_train)
+```
+
+## Cleaning Finalized Training Dataset
+
+Clearing our Dataset from Features with Near Zero Variance
+
+```{r}
+# Near zero variance
+dim(X_train) # before
+nzv <- X_train %>% caret::nearZeroVar(names = TRUE)
+nzv
+
+# Removing features with near zero variance
+X_train <- X_train %>% select(- all_of(nzv))
+dim(X_train) # after
+```
+
+# 6. Splitting the Training and Validation set
+The test set is 20% of the training test, so using the test set from the training to test our models.
+
+```{r}
+# Split data into training set and validation set
+df <- data.frame(y, X_train)
+train_ind <-
+  sample(nrow(df), 0.8 * nrow(df))  # 20% of the training data
+
+# Training set
+train_X <- X_train[train_ind, ]
+train_y <- y[train_ind]
+# dim(train_X)
+# length(train_y)
+
+# Validation set
+validation_X <- X_train[-train_ind, ]
+validation_y <- y[-train_ind]
+# dim(validation_X)
+# length(validation_y)
+```
+
+# 7. Fitting a Model 
+
+## a) Random forests
+
+As an example, here we fit a classification tree, using the pixel based approach.
+
+```{r}
+# Fitting CART (using 5-fold cross-validation to tune the complexity parameter)
+trCntrl = trainControl('cv', 5, allowParallel = TRUE)
+fit_rf = train(
+  train_X,
+  train_y,
+  method = 'ranger',
+  trControl = trCntrl,
+  tuneLength = 15,
+  tuneGrid = data.frame(
+    mtry = sqrt(ncol(train_X)),
+    splitrule = "gini",
+    min.node.size = 1
+  )
+)
+fit_rf$finalModel$prediction.error
+
+# Predictions and cross-validation random forests
+pred_rf <- predict(fit_rf, validation_X, type = "raw") %>% as.factor()
+cm_rf <- confusionMatrix(pred_rf, as.factor(validation_y))
+```
+
+## b) Boosted Trees
+Boosted Trees are a slow-learning approach to constructing trees where trees are successively fitted to the data and then shrunken down. We fit one to multinomial data in the following:
+
+```{r}
+# fitting boosted trees
+fit_gbm <- gbm::gbm(as.factor(train_y) ~ ., data = train_X, distribution = "multinomial", n.trees = 1000)
+
+pred_gbm <- predict(fit_gbm, validation_X, type='response')
+
+# reformat GBM predictions to create categorical predictions and use for cross-validation
+pred_gbm_raw <- as.data.frame(pred_gbm[,,1]) %>% 
+  rowwise() %>% 
+  summarise(outcome = which.max(c(anger, disgust, happy, sad))) %>% 
+  mutate(outcome = c("anger", "disgust", "happy", "sad")[outcome])
+cm_gbm <- confusionMatrix(as.factor(pred_gbm_raw$outcome), as.factor(validation_y))
+```
+
+## c) SVM (Support Vector Machine)
+SVM is another algorithm which can predict the classes, which is fitted below:
+
+```{r}
+# Fitting SVM
+fit_svm <- e1071::svm(as.factor(train_y) ~.,data = train_X, kernel = 'radial', cost = 5, scale = TRUE)
+
+# Predictions and cross-validation SVM
+pred_svm <- predict(fit_svm, validation_X, type='raw')
+cm_svm <- confusionMatrix(pred_svm, as.factor(validation_y))
+```
+
+## d) LDA
+
+```{r}
+# Remove high correlated features to be used for LDA and QDA 
+dim(X_train) 
+corrrelated <- caret::findCorrelation(cor(X_train), .95, names = TRUE)
+uncorrelated <- train_X %>% 
+select(- all_of(corrrelated )) %>% 
+as.matrix()
+validation_X_corrrelated <- validation_X %>% 
+select(- all_of(corrrelated )) %>% 
+as.matrix()
+
+# Fitting LDA 
+fit_lda = train(uncorrelated, train_y, method = 'lda', 
+                trControl = trCntrl, 
+                preProcess = c("pca", "scale", "center"))
+fit_lda
+
+# Predictions and cross-validation LDA
+pred_lda = predict(fit_lda, validation_X_corrrelated, type = 'raw') 
+cm_lda<-confusionMatrix(pred_lda, factor(validation_y))
+```
+
+# e) QDA
+We wanted to see how QDA performs, specifically in comaprisn with LDA 
+
+```{r}
+# Fitting QDA
+fit_qda = train(uncorrelated, train_y, method ='qda', 
+                trControl=trCntrl, 
+                preProcess = c("pca", "scale", "center"))
+fit_qda
+
+
+# Predictions and cross-validation QDA
+pred_qda = predict(fit_qda, validation_X_corrrelated, type = 'raw') 
+cm_qda<-confusionMatrix(pred_qda, factor(validation_y))
+```
+
+## Additional Things
+
+### Bagging
+We wanted to explore how accuracy changes with bagging, however as Bagging was a resource intensive process, we decided to leave it out
+
+```{r}
+# We tried bagging as well however, as it was computationally intensive and demanded a lot of Kaggle memory,
+# We decided to exclude it from our comparisns 
+# bag <- bagging(
+  # formula = as.factor(train_y) ~ .,
+  # data = train_X,
+  # nbagg = 10,   
+  # coob = TRUE,
+  # control = rpart.control(minsplit = 6, cp = 0)
+#)
+
+# Display fitted bagged model
+# bag
+```
+
+# 8. Model comparison
+
+## Accuracy
+To compare the models above, we plot their accuracies on our hold-out validation dataset below:
+
+```{r}
+# Combine relevant accuracy measures into dataframe
+accuracy <-
+  data.frame(
+    model = c("Random_forest", "Boosted_trees", "SVM", "LDA", "QDA"),
+    acc = c(cm_rf$overall[1], cm_gbm$overall[1], cm_svm$overall[1], cm_lda$overall[1],cm_qda$overall[1]),
+    acc_lb = c(cm_rf$overall[3], cm_gbm$overall[3], cm_svm$overall[3],cm_lda$overall[3],cm_qda$overall[3]),
+    acc_ub = c(cm_rf$overall[4], cm_gbm$overall[4], cm_svm$overall[4],cm_lda$overall[4],cm_qda$overall[4])
+  )
+accuracy<-accuracy %>% mutate(color = ifelse( acc == max(acc), "yes", "no" ) ) #from Physical Activity Recognition Group 3
+
+# Plot the accuracies in a bar plot
+ggplot(accuracy,aes(x = reorder(model,-acc), y = acc ,fill = color,label = acc)) +
+  geom_bar(stat = "identity", position = "dodge") +
+scale_fill_manual(values = c( "yes"="red", "no"="grey50" ), guide = "none")+
+  geom_errorbar(  # plot errorbars
+    aes(
+      x = model,
+      ymin = acc_lb,
+      ymax = acc_ub
+    ),
+    width = 0.4,
+    colour = "yellow",
+    alpha = 0.9,
+    size = 1.3
+  ) +
+coord_flip()+
+theme(text = element_text(size=20))+
+labs(x ="", y = "Accuracy")
+```
+
+We see that the SVM performs the best compared to the other methods, so we are going to use that as our final model. Also QDA performs better than LDA which might due to the size of the dataset, or due to the non-linear data. 
+
+# 9. Final Dataset for Prediction and Submission File
+
+## Creating a Test Dataset
+
+```{r}
+# Add features to test sample dataset
+X_test <- X_test %>% 
+    edge_features() %>%
+   as_tibble(rownames = "id") %>%
+    left_join(hist_features, by = "id")
+
+X_test <- column_to_rownames(X_test, var = "id") 
+
+head(X_test)
+```
+
+## Using full dataset for SVM analysis
+
+```{r}
+# Combining the training set with the predictions
+data_all <- data.frame(X_train,y = as.factor(y))
+
+# Fit full SVM
+fit_svm_full <- e1071::svm(y ~ ., data = data_all, kernel = 'radial', cost = 5, scale = TRUE)
+
+# Make predictions
+pred_svm_full <- predict(fit_svm_full, X_test, type = 'raw')
+```
+
+## Formatting your submission file
+
+To format your submission file, you can use the following code:
+
+```{r}
+# Write to file
+tibble(file = rownames(X_test), category = pred_svm_full) %>% 
+    write_csv(file = "submission.csv")
+length(pred_svm_full)
+
+# Check result
+cat(readLines("submission.csv",n=20), sep="\n")
+```
+
+
