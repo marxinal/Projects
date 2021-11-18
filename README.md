@@ -1,7 +1,7 @@
 
 ## First Project
 
-Title: Playlist Classification Machine
+### Title: Playlist Classification Machine
 
 Description: Predicting the genre (class) of a playlist using the audio features from 'Spotifyr' package.
 
