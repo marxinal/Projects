@@ -8,6 +8,9 @@ Title: Playlist Classification Machine
 
 Description: Predicting the genre (class) of a playlist using the audio features from 'Spotifyr' package.
 
+
+<img align="right" width="400" height="250" alt="Screenshot 2021-11-16 at 23 40 55" src="https://user-images.githubusercontent.com/94328819/142458770-df63329f-2953-48ad-b035-9ef46c0b9401.png">
+
 <ins>Dependent Variable:</ins> _(Eight Genres)_
 - Rap/HipHop
 - Synth
@@ -17,9 +20,6 @@ Description: Predicting the genre (class) of a playlist using the audio features
 - Classical Music
 - Russian Turbo Polka
 - Frenchcore
-
-<img align="right" width="370" height="250" alt="Screenshot 2021-11-16 at 23 40 55" src="https://user-images.githubusercontent.com/94328819/142458770-df63329f-2953-48ad-b035-9ef46c0b9401.png">
-
 
 <ins>Predictors:</ins> _(Independent Variables/Features)_
 - Loudness
