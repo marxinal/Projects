@@ -18,7 +18,7 @@ Description: Predicting the genre (class) of a playlist using the audio features
 - Russian Turbo Polka
 - Frenchcore
 
-<img align="right" width="100" height="100" alt="Screenshot 2021-11-16 at 23 40 55" src="https://user-images.githubusercontent.com/94328819/142458770-df63329f-2953-48ad-b035-9ef46c0b9401.png">
+<img align="right" width="250" height="250" alt="Screenshot 2021-11-16 at 23 40 55" src="https://user-images.githubusercontent.com/94328819/142458770-df63329f-2953-48ad-b035-9ef46c0b9401.png">
 
 
 <ins>Predictors:</ins> _(Independent Variables/Features)_
