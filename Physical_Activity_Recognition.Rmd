@@ -1,0 +1,982 @@
+---
+title: "Physical_Activity_Recognition.ipynb"
+author: 'Jelena Kalinic'
+date: '25/09/2021'
+output: html_document
+---
+
+# 1. Loading the necessary libraries
+
+```{r}
+library(tidyverse) 
+library(caret)
+library(dplyr)
+list.files(path = "../Projects/physical_activity_all/physical-activity")
+
+.... = NA
+```
+
+# 2. Reading the data
+
+
+The data are stored in text files. 
+
+- There are text files that store the signals for each user for each experiment (trial; 3 trials per person).
+- There is a text file that stores the activity labels for segments of signals for all participants for each experiment.
+
+The code below does most of the heavy lifting for you.
+
+# 2.1 Import Activity labels
+
+First import the activity labels:
+
+```{r}
+act_labels = read_delim("physical_activity_all/activity_labels.txt"," ", col_names = F, trim_ws = T) 
+act_labels = act_labels %>% select(X1,X2)
+act_labels 
+```
+
+The signals themselves are stored in text files. In these files there are three columns; each column is the signal measured in one of the 3 channels of the sensor (these channels are associated in X, Y and Z direction). Each signal consists of a sequence of measurements, called _samples_.
+
+```{r}
+labels = read_delim("./physical_activity_all/physical-activity/Train/labels_train.txt", " ", col_names = F)
+colnames(labels) = c('trial', 'userid', 'activity', 'start', 'end')
+
+labels = labels %>% mutate(activity = act_labels$X2[activity])
+```
+
+Let's have a look at the labels data frame:
+
+```{r}
+print(labels)
+```
+
+The data frame encodes the `start` and `end` sample for each subsequent activity in signal files, for each `trial` and `userid`.  
+
+What should be noticed is that some activities Ire repeated at different times during the recording, which results in multiple time (sample) windows in which the participant was for instance `WALKING_UPSTAIRS`.
+
+For each user there are several files. Although you may be inclined to think in terms of "users" (as they are participants), it's easier to focus on the files, because there in some cases multiple files per user.
+
+Here I'll import only the files of which the filename starts with 'acc' (for 'accelorometer' as opposed to 'gyroscope'). 
+
+The filenames contain information about the participant ID (prefixed with `user`), and about the experimental run (prefixed with `exp`). The latter isn't very usefull, but I will need it anyway extract the proper rows from the `labels` data frame above. I need to retain this information, and therefore I use "regular expressions" to extract them
+
+# 2.3 Merging Signals and Labels
+
+The data frame `labels` contains this information, but in a somewhat odd format: Each row specifies at which samples an activity for a given participant in a given experimental run started and ended. For example, the first two rows
+
+It is much handier to have a data frame that gives an activity label for each `trial`, `userid` and each time `sampleid`.
+
+```{r}
+# Add the sequence start:end to each row in a list.
+# The result is a nested table:
+sample_labels_nested = 
+    labels %>% 
+    rowwise() %>% # do next operation(s) rowwise
+    mutate(sampleid = list(start:end)) %>%
+    ungroup()
+
+# Check the resulting table:
+print(sample_labels_nested, n=6) 
+```
+
+Next I unnest the nested tibble `sample_labels_nested` to obtain a table that for each `sampleid` value stores the right `activity` label. There is hoIver one issue: Each row corresponds to a signal segment of an activity. Some of the activities, such as WALKING, Ire done multiple times in the same experiment in different time segments. I need to be able to identify different segments of WALKING. Therefore, before unnesting, I'll add the row numbers as `segment` ID:
+
+```{r}
+# Unnest the nested tabel.
+sample_labels = 
+    sample_labels_nested %>% 
+
+    # Rows are segments, I need to keep track of different segements
+    mutate(segment = row_number() ) %>% 
+
+    # Expand the data frame to one sample per row
+    unnest() %>% 
+
+    # Remove columns I don't need anymore
+    select(-start, -end) 
+
+
+# Check the result (first few rows are not interesting; rows 977-990 are)
+print(sample_labels[977:990, ])
+```
+
+Now that I have each sample labeled with an activity, I can add the corresponding signals values that are stored in `user01`.
+
+Let's put the signals `user01` in a data frame in which I include the `userid`, the `trial` number, and a `sampleid` for each row in `user01`. Then I'll use a `left_joint()` to merge the activity labels for both the accelerator and gyroscope data. 
+
+# Importing Data
+
+```{r}
+# Importing the raw data for user1 from both Accelerator and Gyroscope data
+filename_Acc = "physical_activity_all/physical-activity/Train/acc_exp01_user01.txt"
+filename_Gyro = "physical_activity_all/physical-activity/Train/gyro_exp01_user01.txt"
+
+username_Acc = gsub(".+user(\\d+).+", "\\1", filename_Acc) %>% as.integer()
+expname_Acc  = gsub(".+exp(\\d+).+", "\\1", filename_Acc) %>% as.integer()
+
+username_Gyro = gsub(".+user(\\d+).+", "\\1", filename_Gyro) %>% as.integer()
+expname_Gyro  = gsub(".+exp(\\d+).+", "\\1", filename_Gyro) %>% as.integer()
+
+# import the data from the files
+Raw_Data_Acc = read_delim(filename_Acc, " ", col_names = F)
+Raw_Data_Gyro = read_delim(filename_Gyro, " ", col_names = F)
+
+# Accelerator Dataframe
+Data_Acc = 
+    data.frame(userid = username_Acc, trial = expname_Acc, Raw_Data_Acc) %>%
+    mutate(sampleid = 0:(nrow(Raw_Data_Acc)-1) ) %>%
+    #using the unnested sample labels to join based on just as with the example with one user
+    left_join(sample_labels) 
+
+# Gyroscope Dataframe
+Data_Gyro =
+    data.frame(userid = username_Gyro, trial = expname_Gyro, Raw_Data_Gyro) %>%
+    mutate(sampleid = 0:(nrow(Raw_Data_Gyro)-1)) %>%
+    #using the unnested sample labels to join based on just as with the example with one user
+    left_join(sample_labels) 
+```
+
+## Raw Accelerator Data Signal Forms for User 1
+
+There are several things that are good to mention regarding the plot below. You can definitely see that the signals have a larger width when measured by the accelerator in comparison to the gyroscope. This is visible in the black parts, and the same for all the X's. 
+The parts on the left and right side of the wider and biggerr black patterns, are also different. The variation seems to be larger in the accelerator than gyroscope. This again seems to be the case for all the X's.
+
+```{r}
+options(repr.plot.width = 12)
+plot.ts(Raw_Data_Acc, xlab = "Sample number")
+plot.ts(Raw_Data_Gyro, xlab = "Sample number")
+```
+
+## Colmy-Labelled Different Signal Activities 
+
+To visualize the result, use `ggplot()` which makes it allows to give different signal segments different colors to label the activity in that segment:
+
+```{r}
+options(repr.plot.width = 15) # change plot width for nicer output
+
+# X1
+Data_Acc %>% 
+  ggplot(aes(x = sampleid, y = X1, col = factor(activity), group=segment)) + 
+      geom_line() 
+
+# X2
+Data_Acc %>% 
+  ggplot(aes(x = sampleid, y = X2, col = factor(activity), group=segment)) + 
+      geom_line() 
+# X3
+Data_Acc %>% 
+  ggplot(aes(x = sampleid, y = X3, col = factor(activity), group=segment)) + 
+      geom_line() 
+```
+
+## ACC Plots
+This is very interesting to see, as there are  different signal activities. You can see that the plot of X1 is fairly different from the plots of X2 and X3. 
+The left part with a smaller/narroIr line of different activities is blow the 0 and there seems to be zero-crossings, hoIver for X2 and X3 there seem to be no zero-crossings. 
+
+```{r}
+options(repr.plot.width=15) # change plot width for nicer output
+
+# X1 
+Data_Gyro %>% 
+  ggplot(aes(x = sampleid, y = X1, col = factor(activity), group=segment)) + 
+      geom_line() 
+
+# X2
+Data_Gyro %>% 
+  ggplot(aes(x = sampleid, y = X2, col = factor(activity), group=segment)) + 
+      geom_line() 
+
+# X3
+Data_Gyro %>% 
+  ggplot(aes(x = sampleid, y = X3, col = factor(activity), group=segment)) + 
+      geom_line()
+```
+
+## GYRO Plots
+What is sailant here is that again X1 is fairly different from X2 and X3 when looking at the left side of the plot. 
+Only here X1 seems to be wider than X2 and X3, which could reflect more variation in X1.
+
+# Walk Cycle plots
+Here you can see the same pattern for walking for the three X's. The only difference is that X1 has the dip some samples later than X2 and X3. But overall the different lines in each plot seem fairly aligned. 
+In the gyroscope plots you can see that the patterns are a bit different from each other, comparing the X's. And the lines are less aligned compared to the lines of the ACC. Nevertheles, all the X's have the same pattern, just with a little more variability then for the ACC.
+
+```{r}
+Data_Acc %>% 
+
+  # change 7986 to 8586 to see shifted walk cycle
+  dplyr::filter(activity == "WALKING", segment == 13, 
+    7596 < sampleid & sampleid < 7986) %>% 
+
+  ggplot(aes(x = sampleid %% 54, y = X1, group = sampleid %/% 54, 
+             col = factor(sampleid %/% 54))) + geom_line() 
+
+
+Data_Acc %>% 
+
+  # change 7986 to 8586 to see shifted walk cycle
+  dplyr::filter(activity == "WALKING", segment == 13, 
+    7596 < sampleid & sampleid < 7986) %>% 
+
+  ggplot(aes(x = sampleid %% 54, y = X2, group = sampleid %/% 54, 
+             col = factor(sampleid %/% 54))) + geom_line() 
+
+
+Data_Acc %>% 
+
+  # change 7986 to 8586 to see shifted walk cycle
+  dplyr::filter(activity == "WALKING", segment == 13, 
+    7596 < sampleid & sampleid < 7986) %>% 
+
+  ggplot(aes(x = sampleid %% 54, y = X3, group = sampleid %/% 54, 
+             col = factor(sampleid %/% 54))) + geom_line() 
+```
+
+```{r}
+Data_Gyro %>% 
+
+  # change 7986 to 8586 to see shifted walk cycle
+  dplyr::filter(activity == "WALKING", segment == 13, 
+    7596 < sampleid & sampleid < 7986) %>% 
+
+  ggplot(aes(x = sampleid %% 54, y = X1, group = sampleid %/% 54, 
+             col = factor(sampleid %/% 54))) + geom_line() 
+
+
+Data_Gyro %>% 
+
+  # change 7986 to 8586 to see shifted walk cycle
+  dplyr::filter(activity == "WALKING", segment == 13, 
+    7596 < sampleid & sampleid < 7986) %>% 
+
+  ggplot(aes(x = sampleid %% 54, y = X2, group = sampleid %/% 54, 
+             col = factor(sampleid %/% 54))) + geom_line() 
+
+
+Data_Gyro %>% 
+
+  # change 7986 to 8586 to see shifted walk cycle
+  dplyr::filter(activity == "WALKING", segment == 13, 
+    7596 < sampleid & sampleid < 7986) %>% 
+
+  ggplot(aes(x = sampleid %% 54, y = X3, group = sampleid %/% 54, 
+             col = factor(sampleid %/% 54))) + geom_line() 
+```
+
+# Time domain features and Epochs
+Here I defined a time window of 54 samples, in which one complete walking cycle is finished; the next walking cycles are plotted on top of each other. The pattern is clear. The problem is 
+
+1. that I don't know how long the typical pattern is (i.e., how many samples it spans), and 
+2. that the pattern may be shifted relative to the start of my time window so that it appears _shifted_ 
+
+Shifting can occur for any reason, and is visible if you change the `filter` argument `sample < 7986` to `sample < 8686` to show more steps from the signal: the extra steps seem to have shifted.
+
+If I try to combine signals from multiple participants I wouldn't even know how to align the samples. What I have to do is compute features that are (more or less) invariant to time shifts. One way to do this is by simply ignoring the time order of the values and look at them as a collection of numbers. The best way to look at unordered collections of numbers is to look at statistical summaries.
+
+For instance, have a look at the histograms per activity
+
+The following histograms are quite distinct, and I can compute all kinds of statistics for them that characterize their shapes (e.g., mean, sd, skewness, inter-quartile ranges, etc.). Hence, useful features may be found amongst these statstical descriptive measures.
+
+To predict the activities in subsequent time windows (epochs of 128 samples/ 50Hz = 2.56 sec), I use a clever trick involving integer division: By dividing the sample number by 128 I obtain an integer that will group samples into epochs. For instance say I have sample numbers 0, 2, 3, ..., 14, and I want to group them into 4 epochs of length 3, then integer division yields:
+
+### Histogram for Accelerator Data (user 1 only)
+
+```{r}
+Data_Acc %>%
+    ggplot(aes(X1)) + 
+      geom_histogram(bins=40, fill=1, alpha=0.5) + 
+      geom_histogram(aes(X2), bins=40, fill = 2, alpha=0.5) + 
+      geom_histogram(aes(X3), bins=40, fill = 4, alpha=0.5) +
+      facet_wrap(~activity, scales = "free_y")
+```
+
+## Interactions Accelerator
+For interaction effects in the Accelerator data I looked at these histograms and thought about which features could together increase my predictions. Especially outcome variables that had very similar patterns but maybe a couple key differences (for instance lie_to_sit and sit_to_lie) Ire taken into consideration. 
+- means: In some histograms the means of the different X predictors do not differ that much on their own while the means of 2 X variables together do show differences in patterns (lie_to_sit and sit_to_lie).
+- means with kurtosis: Some histograms have similar kurtosis and means but might show significant differences when taken together (lie_to_stand and stand_to_lie).
+- means with skewness: Some histograms have similar skeIdness and means but might show significant differences when taken together (walking_downstairs and walking_upstairs).
+- kurtosis with skewness: The pattern of kurtosis and skeIdness together seems unique for a lot of these histograms. That is why interactions betIen these variables are also used as possible predictors in my model. 
+- MinMax with means: Lastly, the difference betIen the maximum and minimum together with the mean is taken as a possibly good predictor for small differences withing patterns. 
+
+### Histogram for Gyroscope Data (user 1 only)
+
+```{r}
+Data_Gyro %>%
+    ggplot(aes(X1)) + 
+      geom_histogram(bins=40, fill=1, alpha=0.5) + 
+      geom_histogram(aes(X2), bins=40, fill = 2, alpha=0.5) + 
+      geom_histogram(aes(X3), bins=40, fill = 4, alpha=0.5) +
+      facet_wrap(~activity, scales = "free_y")
+```
+
+## Interactions Gyroscope
+For interaction effects in the Gyroscope data I looked at these histograms and thought about which features could together increase my predictions. I ended up trying the following interactions:
+- Kurtosis of all variables: Sometimes the kurtosis of one feature does not differ but the pattern of kurtosis for all the features together could possible give some extra predictive poIr to the model.
+- Standerd Deviation of all variables: just as with kurtosis I can see that there are many peaks in the model but specific patterns with all X variables might better predicted by an interaction of all the standerd deviations.
+- Peak with amplitude range: The pattern of peaks and amplitude range is fairly different for the transition of two activities. Even so compared to their reversed, so comparing sit_to_lie to lie_to_sit you see a different pattern when looking at the peaks and the amplitude range. Therefore I added an interaction of these two features to better distinguish betIen the transition of two activities.
+- Lastly the Max and Min variables: Because some patterns (like walking_downstairs and walking_upstairs) have very small differences in maximum and minumum values I tried to get a key predictor in differentiating betIen those patterns. Combinations of minumum and maximum values Ire used as possible good interactions.
+
+# 4. Putting it all together
+
+```{r}
+dir("physical_activity_all/physical-activity/Train/", pattern = "^acc")
+```
+
+# 4 Features
+
+I analyzed the histograms to design specific features that distinguish betIen the different signals of physical activity. Overall the features could distinguish Ill, although it was very hard to do that for the following shifts:
+- The time shift when someone starts to walk
+- The time shift or delation when someone goes from walking slow to fast
+- The amplitute shift where someone goes from taking 'normal steps' to smaller steps. 
+
+I tried to design features that could help identifying the overal signals from the histograms, as Ill as the shifts that are more difficult to distinguish. Therefore, I designed the following features:
+
+## Features that capture the specific region
+- Mean
+- Mode
+- Median
+- Minimum
+- Maximum
+- Maximum Frequency Index
+
+## Features that capture specific spreading
+- PoIr: the poIr is the probability that the test will find a statistically significant difference betIen the amplitude of the signals. Where it reflects the variance of the amplitude of the signals as Ill as the squared mean summed.
+- MinMax: The difference betIen largest and smallest value in the histogram which is useful for differentiating betIen the spreads of the histograms (Bayat, Pomplun & Tran, 2014). 
+- Mean Absolute Deviation (MAD): The absolute average distance betIen the mean and every data point. 
+
+## Features that capture specific statistics
+- Standard Deviation
+- Standard Error
+- Interquartile Ranges
+- 25% Quartile Ranges
+- 75% Quartile Ranges
+
+## Features that capture specific shapes
+- Skewness: Skewness is measured by identifying assymmetry of a particular histogram. The histogram is balanced when there is zero-value. It is on the left tail when it is negative, and it is on the right tail when it is positive. 
+- Kurtosis: This measure describes the specific shape of a particular histogram where this shape is identified by measuring the peakedness of the histogram. If it's a normal distribution the peakedness is 3, which means that the most values are in and around the middel of the distribution. If it is not normal distributed the peakedness of the histogram, ans thus the most values are in the sides. 
+- Entropy: According to the article "feature extraction from signals" entropy is a important measure of detecting signals and thus I also carried out this measurement.
+
+## Features that capture specific time domains
+- Lagged cross-correlations: Cross-correlations are very useful in predicting the change of one  signal into another,specifically for comparing two times series or one in case of autocorrelations to see how Ill they match with one another. High correlations will indicate similarities betIen signals, whereas low will indicate no relation betIen the phenomena in the signals. This method takes into account time delay and thus allows to match certain signals that might have been overlooked otherwise. These differences thus alloId for further possible feature extraction and disentangling possible differences among signals. In my case, I decided to use different lags in order to cover as many possible scenarios (I used lags of 1, 3, 5, 10). Although it is more likely that as the number of lags increases, the possibility of a match decreases, I still deciced to test out a lag of 10 in order to possibly detect any potential matches. Smyce: https://www.usna.edu/Users/oceano/pguth/md_help/html/time0alq.htm
+- Correlation: Computes the overall correlation betIen time series with no particular lags specified.
+- Amplituderange: Computes the amplitude range which is the difference betIen the maximum and minimum sample values in a sample window. 
+- MSE: The absolute sum of the signals. Computes the absolute area by taking the sum of the absolute sample values in a vector of signals. I found this was a useful measurement of time (Konsolakis, 2018). 
+- Mean Frequency Average: Again Bakram and colleagues (2014) found this to be a good feature of physical activity recognition.
+- Cosine Angles: Computes the cosine similarity betIen two vectors without taking into consideration their length. 
+
+## Features that capture specific frequencies
+- Spectral features: The function spectrum() gives an estimation of the spectrum of a function. In order to be able to derive information about the nature of the function and more about the physical movements within my frequency domains, I estimated statistical features on the spectrum features. In particular I included features such as: spectral peak of a vector, spectral mean of a vector, spectral standard deviation of a vector, spectral entropy of a vector, spectral skewness and kurtosis of a vector, spectral mode and median of a vector. 
+- Zero-crossings: The frequency of certain physical activities crossing a zero-point. Since I assume differenct physical activities and their signals differ in their frequency of zero-point crossings (Gangadhar, Giridhar Akula, & Reddy, 2018). 
+
+## my Functions
+
+Before I designed my features, I first made functions needed to design some of my features. I wrote some of them myselves and others I found via googling. I found the entropy function via the paper "Feature extraction from Signals", others functions I found via https://www.tutorialspoint.com/r/r_mean_median_mode.htm
+
+** **
+- Bayat, A., Pomplun, M., & Tran, D. A. (2014). A Study on Human Activity Recognition Using Accelerometer Data from Smartphones. Procedia Computer Science, 34, 450–457. https://doi.org/10.1016/j.procs.2014.07.009
+- Gangadhar, Y., Giridhar Akula, V., & Reddy, P. C. (2018). An evolutionary programming approach for securing medical images using watermarking scheme in invariant discrete wavelet transformation. Biomedical Signal Processing and Control, 43, 31–40. https://doi.org/10.1016/j.bspc.2018.02.007
+- Konsolakis, K. (2018). Physical Activity Recognition Using Iarable Accelerometers in Controlled and Free-Living Environments (Nr. 6). TU Delft. http://resolver.tudelft.nl/uuid:af2e1786-ccc4-4592-afc8-b19819544f26
+
+## Feature Functions
+
+```{r}
+# Helper functions
+most_common_value = function(x) {
+    counts = table(x, useNA='no')
+    most_frequent = which.max(counts)
+    return(names(most_frequent))
+}
+
+# Function to calculate correlation betIen x and time shifted y
+lagged_cor = function(x, y = x, lag = 0){   
+    r_lagged = cor(x, dplyr::lag(y, lag), use = 'pairwise')
+    r_lagged = if (is.na(r_lagged)) 0 else r_lagged  # excluding possible NAs by converting them to 0 
+    return(r_lagged)
+}
+
+# Function to get the mode
+mode_f = function(x) {
+   uniqv = unique(x)
+   return(uniqv[which.max(tabulate(match(x, uniqv)))]) # finding the highest peak of the frequencies or the mode
+}
+
+# Function to get the standard error stolen from Group 10 
+sd_error = function(x) {
+    return(sd(x) / sqrt(length(x)))
+}
+
+# Function to calculate entropy 
+entropy  = function(x, nbreaks = nclass.Sturges(x)) { # taking the suggested number of classes of a given histogram
+    r = range(x)  # taking the range of the given histogram 
+    x_binned = findInterval(x, seq(r[1], r[2], len = nbreaks)) 
+    h = tabulate(x_binned, nbins = nbreaks) # fast histogram
+    p = h/sum(h)
+    -sum(p[p>0] * log(p[p>0]))
+
+}
+
+# Function to calculate the spectral peak of vector
+spec_peak = function(x) {
+  spec = spectrum(x, plot = FALSE)  # creating the spectral density of the time series (vector)
+  return(spec$freq[which.max(spec$spec)]) # finding the frequency value (x-axis) at which the maximum value of spectral density occurs (y-axis)
+}
+
+# Function to calculate the spectral entropy of vector
+spec_entropy = function(x) {
+  spec = spectrum(x, log = "n", plot = FALSE)$spec #finding the vector of spectral density values of my periodogram
+  entropy(spec) # using the previously created entropy function to get spectral entropy 
+}
+
+# Function to calculate the spectral mean of vector
+spec_mean = function(x) {
+    spec = spectrum(x, log = "n", plot = FALSE)$spec  # finding the vector of spectral density values of my periodogram
+    freq = spectrum(x, log = "n", plot = FALSE)$freq  # finding the vector of frequency values of my periodogram
+    df   = freq[2] - freq[1]  
+    return(sum(freq * spec * df))
+}
+
+# Function to calculate the spectral standard deviation of vector
+spec_sd = function(x) {
+    spec = spectrum(x, log = "n", plot = FALSE)$spec # finding the vector of spectral density values of my periodogram
+    freq = spectrum(x, log = "n", plot = FALSE)$freq # finding the vector of frequency values of my periodogram
+    df   = freq[2] - freq[1]
+    return(sqrt(sum((freq - mean(x))^2 * spec * df)))
+}
+
+# Function to calculate the spectral mode of vector 
+spec_mode = function(x) {
+    spec = spectrum(x, log = "", plot = FALSE)
+    return(max(density(spectrum(x,plot = FALSE)$freq * spectrum(x,plot = FALSE)$spec)$x))
+}
+
+# Function to calculate the spectral median of vector
+spec_med = function(x) {
+    spec = spectrum(x, log = "", plot = FALSE)
+    return(median(density(spectrum(x,plot = FALSE)$freq * spectrum(x,plot = FALSE)$spec)$x))
+}
+
+# Function to calculate the spectral skewness of vector
+spec_skew = function(x) {
+    spec = spectrum(x, log = "n", plot = FALSE)
+    return(e1071::skewness(density(spectrum(x,plot = FALSE)$freq * spectrum(x,plot = FALSE)$spec)$y)) # finding the density function of my periodogram                                                                                               ### obtaining a vector to find the spectral skewness 
+    }
+
+# Function to calculate the spectral kurtosis of vector
+spec_kurt = function(x) {
+    spec = spectrum(x, log = "n", plot = FALSE)
+    return(e1071::kurtosis(density(spectrum(x,plot = FALSE)$freq * spectrum(x,plot = FALSE)$spec)$y)) # finding the density function of my periodogram and                                                                                                       
+    }
+
+# Funtion that calculates the mean frequency of a vector of a signal
+mf = function(MeanFreq){
+    sig = numeric(length(MeanFreq))
+    for(i in 1:length(MeanFreq))
+    {sig[i] = i * MeanFreq[i]}
+    return(sum(sig)/sum(MeanFreq))
+}
+
+# Function to calculate the Magnitude Signal Area by calculating the absolute sum of the signals
+msa = function(s1,s2,s3){
+    msa = sum(sum(abs(s1)),sum(abs(s2)),sum(abs(s3)))/3
+    return(msa)
+}
+```
+
+## Extracting all of the features from my data
+
+```{r}
+extractTimeDomainFeatures = function(filename, sample_labels) {
+    
+    # extract user and experimental run ID's from file name
+    username = gsub(".+user(\\d+).+", "\\1", filename) %>% as.numeric()
+    expname  = gsub( ".+exp(\\d+).+", "\\1", filename) %>% as.numeric()
+    
+    # import the sensor signals from the file
+     user01 = read_delim(filename, " ", col_names = F, progress = TRUE, 
+                 col_types = "ddd")
+    
+    
+    # merge signals with labels 
+    user_df = 
+        data.frame(userid = username, trial = expname, user01) %>%
+        mutate(sampleid = 0:(nrow(user01)-1) ) %>%
+        left_join(sample_labels, by = c('userid','trial','sampleid')) 
+    # split in epochs of 128 samples and compute features per epoch
+    
+    usertimedom =  user_df %>%
+    
+          # add an epoch ID variable (on epoch = 2.56 sec)
+          mutate(epoch = sampleid %/% 128) %>% 
+
+          # extract statistical features from each epoch
+          group_by(epoch) %>%
+          summarise(
+            # keep track of user and experiment information
+            n_samples = n(),
+            user_id = username, 
+            exp_id = expname,   
+              
+            # epoch's activity labels and start sample
+            activity = most_common_value(c("-", activity)),
+            sampleid = sampleid[1],
+              
+            ## FEATURES
+              
+            # MEAN
+            m1 = mean(X1), 
+            m2 = mean(X2),
+            m3 = mean(X3),
+              
+            # STANDARD DEVIATION
+            sd1 = sd(X1),
+            sd2 = sd(X2),
+            sd3 = sd(X3),
+             
+            # AUTOCORRELATION
+            AR1.n1 = lagged_cor(X1, X1, 1), 
+            AR2.n1 = lagged_cor(X2, X2, 1),
+            AR3.n1 = lagged_cor(X3, X3, 1),
+            AR1.n3 = lagged_cor(X1, X1, 3),
+            AR2.n3 = lagged_cor(X2, X2, 3),
+            AR3.n3 = lagged_cor(X3, X3, 3),
+            AR1.n5 = lagged_cor(X1, X1, 5),
+            AR2.n5 = lagged_cor(X2, X2, 5),
+            AR3.n5 = lagged_cor(X3, X3, 5),
+            AR1.n10 = lagged_cor(X1, X1, 10),
+            AR2.n10 = lagged_cor(X2, X2, 10),
+            AR3.n10 = lagged_cor(X3, X3, 10),
+            AR12.n1 = lagged_cor(X1, X2, 1),
+            AR13.n1 = lagged_cor(X1, X3, 1),
+            AR23.n1 = lagged_cor(X2, X3, 1),
+            AR12.n10 = lagged_cor(X1, X2, 10),
+            AR13.n10 = lagged_cor(X1, X3, 10),
+            AR23.n10 = lagged_cor(X2, X3, 10),
+              
+            # 25% QUARTILE
+            q1_25_x1 = quantile(X1, .25),
+            q1_25_x2 = quantile(X2, .25),
+            q1_25_x3 = quantile(X3, .25),
+            
+            # 75% QUARTILE
+            q3_75_x1 = quantile(X1, .75),
+            q3_75_x2 = quantile(X2, .75),
+            q3_75_x3 = quantile(X3, .75),
+        
+            # INTERQUARTILE RANGE
+            IQR1 = quantile(X1, .75) - q1_25_x1,
+            IQR2 = quantile(X2, .75) - q1_25_x2,
+            IQR3 = quantile(X3, .75) - q1_25_x3,
+              
+            # SKEWNESS
+            skew1 = e1071::skewness(X1),
+            skew2 = e1071::skewness(X2),
+            skew3 = e1071::skewness(X3),
+              
+            # KURTOSIS
+            kurt1 = e1071::kurtosis(X1),
+            kurt2 = e1071::kurtosis(X2),
+            kurt3 = e1071::kurtosis(X3),
+              
+            # MODE
+            mode1 = mode_f(X1), 
+            mode2 = mode_f(X2),
+            mode3 = mode_f(X3),
+            
+            # MEDIAN
+            med1 = median(X1), 
+            med2 = median(X2),
+            med3 = median(X3),
+            
+            # MINIMUM
+            min1 = min(X1),
+            min2 = min(X2),
+            min3 = min(X3),
+              
+            # MAXIMUM
+            max1 = max(X1),
+            max2 = max(X2),
+            max3 = max(X3),
+              
+            # MAXIMUM FREQUENCY INDEX
+            maxFreqInd = max(X1,X2,X3),
+              
+            # MINMAX
+            MinMax1 = max1 - min1, 
+            MinMax2 = max2 - min2,
+            MinMax3 = max3 - min3,
+      
+            # VARIANCE 
+            var1 = var(X1), 
+            var2 = var(X2), 
+            var3 = var(X3), 
+            
+            # STANDARD ERROR
+            sd_error1 = sd_error(X1),
+            sd_error2 = sd_error(X2),
+            sd_error3 = sd_error(X3),
+              
+            # MEAN ABSOLUTE DEVIATION (from Group 10)
+            mad1 = mad(X1), 
+            mad2 = mad(X2),   
+            mad3 = mad(X3),
+            
+            #CORRELATION BETIEN VECTORS (from Group 10)
+            cor1_2 = cor(X1, X2),
+            cor1_3 = cor(X1, X3), 
+            cor2_3 = cor(X2, X3),
+            
+            #COSINE ANGLE (from Group 10)
+            cosangle1 = X1 %*% X2 / sqrt(sum(X1^2) * sum(X2^2)), 
+            cosangle2 = X1 %*% X3 / sqrt(sum(X1^2) * sum(X3^2)),  
+            cosangle3 = X3 %*% X2 / sqrt(sum(X3^2) * sum(X2^2)), 
+              
+            # POIR
+            pow1 = m1^2,
+            pow2 = m2^2,
+            pow3 = m3^2,
+              
+            # ENTROPY
+            ent1 = entropy(X1),
+            ent2 = entropy(X2),
+            ent3 = entropy(X3),
+            
+            # SIMILARITY
+            angle_12 = cor(scale(X1, scale = FALSE), scale(X2, scale = FALSE)),
+            angle_13 = cor(scale(X1, scale = FALSE), scale(X3, scale = FALSE)),
+            angle_23 = cor(scale(X2, scale = FALSE), scale(X3, scale = FALSE)),
+              
+            # SPECTRAL FEATURE: PEAK
+            spec_peak1 = spec_peak(X1),
+            spec_peak2 = spec_peak(X2),
+            spec_peak3 = spec_peak(X3),
+        
+            # SPECTRAL FEATURE: ENTROPY
+            spec_ent1 = spec_entropy(X1),
+            spec_ent2 = spec_entropy(X2),
+            spec_ent3 = spec_entropy(X3),
+      
+            # SPECTRAL FEATURE: MEAN
+            spec_mean1 = spec_mean(X1),
+            spec_mean2 = spec_mean(X2),
+            spec_mean2 = spec_mean(X2),
+      
+            # SPECTRAL FEATURE: STANDARD DEVIATION
+            spec_sd1 = spec_sd(X1),
+            spec_sd2 = spec_sd(X2),
+            spec_sd3 = spec_sd(X3), 
+            
+            # SPECTRAL FEATURE: MODE
+            spec_mode1 = ifelse(n_samples == 128, spec_mode(X1), 0),
+            spec_mode2 = ifelse(n_samples == 128, spec_mode(X2), 0),
+            spec_mode3 = ifelse(n_samples == 128, spec_mode(X3), 0),
+            
+            # SPECTRAL FEATURE: MEDIAN
+            spec_med1 = ifelse(n_samples == 128, spec_med(X1), 0),
+            spec_med2 = ifelse(n_samples == 128, spec_med(X2), 0),
+            spec_med3 = ifelse(n_samples == 128, spec_med(X3), 0),
+
+            # SPECTRAL FEATURE: SKEWNESS
+            spec_skew1 = ifelse(n_samples == 128, spec_skew(X1), 0),
+            spec_skew2 = ifelse(n_samples == 128, spec_skew(X2), 0),
+            spec_skew3 = ifelse(n_samples == 128, spec_skew(X3), 0),
+              
+            # SPECTRAL FEATURE: KURTOSIS
+            spec_kurt1 = ifelse(n_samples == 128, spec_kurt(X1), 0),
+            spec_kurt2 = ifelse(n_samples == 128, spec_kurt(X2), 0),
+            spec_kurt3 = ifelse(n_samples == 128, spec_kurt(X3), 0),
+            
+            # AVERAGE OF IIGHTED FREQUENCY
+            w_mean_freq1 = mf(X1),
+            w_mean_freq1 = mf(X2),
+            w_mean_freq1 = mf(X3),
+            
+            # AMPLITUDE RANGE
+            amp_range1 = sum(abs(X1 - m1)),
+            amp_range2 = sum(abs(X2 - m2)),
+            amp_range3 = sum(abs(X3 - m3)),
+              
+            # MAGNITUDE SIGNAL AREA
+            msa = msa(X1,X2,X3),
+    
+            # ZERO CROSSINGS
+            zero_cross1 = 0.5 * mean(abs(sign(X1 * (sampleid + 1)) - sign(X1 * (sampleid)))),
+            zero_cross2 = 0.5 * mean(abs(sign(X2 * (sampleid + 1)) - sign(X2 * (sampleid)))),
+            zero_cross3 = 0.5 * mean(abs(sign(X3 * (sampleid + 1)) - sign(X3 * (sampleid)))),
+          )
+}
+```
+
+# 5. Data Importing and Wrangling 
+
+## 5.1 Loading my Training Data
+
+```{r}
+# demonstrate this for only the first 5 files
+filenames_Acc = dir("physical_activity_all/physical-activity/Train/", "^acc", full.names = TRUE) 
+filenames_Gyro = dir("physical_activity_all/physical-activity/Train/", "^gyro", full.names = TRUE)
+
+# map_dfr runs `extractTimeDomainFeatures` on all elements in 
+# filenames and binds results row wise
+myData_Acc = map_dfr(filenames_Acc,extractTimeDomainFeatures, sample_labels) %>%
+    filter(n_samples == 128)
+
+myData_Gyro = map_dfr(filenames_Gyro, extractTimeDomainFeatures, sample_labels) %>%
+    filter(n_samples == 128)
+
+# Check the result
+myData_Train = myData_Acc %>%  
+        inner_join(myData_Gyro, by = c('epoch', 'user_id', 'exp_id', 
+                                       'activity', 'sampleid', 'n_samples'),
+                       suffix = c("_acc", "_gyro"))
+
+which(is.na(myData_Train))
+
+head(myData_Train)
+
+# the training dataset including only the features
+myData_Train_All = myData_Train[-c(1,2,3,4,6)]
+
+head(myData_Train_All)
+```
+
+## 5.2 Cleaning my Data
+
+### Removing Features with Near Zero Variance and High Correlation
+
+```{r}
+# Checking for Correlation and Near Zero Variances among predictors
+near_zero = caret::nearZeroVar(myData_Train[, -c(1:6)])
+
+# There are no variables found that have near zero variation
+glimpse(near_zero) 
+
+
+# Check if there are highly correlated features 
+total_correlation_matrix = cor(myData_Train[,-c(1:6)]) 
+high_total_r = total_correlation_matrix %>%
+    findCorrelation(cutoff = 0.9) + 6
+glimpse(high_total_r)
+
+
+# Omit variables with high correlation and near zero variation
+myData_Train_Clean = myData_Train[-c(high_total_r, near_zero)]
+```
+
+### Checking for Multicollinearity in my Features
+
+```{r}
+# I took this viff function from group 10
+vif_df = myData_Train_Clean[,-c(1,2,3,4,6)] %>%
+            mutate(activity = as.factor(activity))
+
+fit_vif = lm(as.numeric(activity) ~ ., data = vif_df)
+
+alias_of_fit = fit_vif %>% 
+ alias()  
+
+# these two features shoId perfect collinearity of 1
+Removed_perf_col = vif_df %>%
+                        select(-c(IQR1_gyro, IQR3_gyro)) 
+
+# creating a new model so to fix the error in finding other multicollinear features
+new_model = lm(as.numeric(activity) ~., data = Removed_perf_col) 
+
+multicollinear_predictors = car::vif(new_model) %>%
+    as.data.frame() %>%
+    filter(. >= 10) %>%
+    rownames()
+
+multicollinear_predictors
+
+# Removing all the multicolinear predictors
+myData_Train_Clean = myData_Train_Clean %>%
+                    select(-all_of(multicollinear_predictors))
+
+# All the features that Ire used eventually after cleaning all the data:
+colnames(myData_Train_Clean[-c(1:6)]) %>% str_c(collapse = ' + ')
+
+# Only Predictors data that Ire left after all the cleaning procedures (near zero variance, high correlation, multicolinearity)
+myData_Train_Clean = myData_Train_Clean[-c(1,2,3,4,6)]
+```
+
+Now the data are turned into a tidy format with features that can be used in any of the algorithms. 
+
+# 6. Model fitting
+
+- I kept all the epochs, so the epochs without labels as Ill.
+- I only used epochs with exactly 128 samples, and thus deleted the epochs that did not have 128 samples exactly. 
+
+I then fitted an LDA, KNN, KNNS (knn scaled), and a multinomial and QDA with less features because they only worked that way. When I added more features, the QDA and multinomial stopped working. Important to note is that I chose a K of 10, because Hastie and Tibshirani explained that the best K to choose is betIen 5 and 10, I Int for a K of 10 in order to have large variance in my data. The split of 80/20 was chosen because it was mentioned in the book that the possibility of bias will become high when there is less data to train on. 
+
+** **
+James, Gareth, Daniela Witten, Trevor Hastie, and Robert Tibshirani. 2013. An introduction to statistical learning: with applications in R.
+
+## 6.1 All the Models
+
+```{r}
+# Fitting classifier models from ISLR Chapter 4
+trcntr = trainControl('cv', number = 10, p = .8)
+
+# LDA models
+# LDA fitting including all of my predictors
+fit_lda_all = caret::train(activity ~.,           
+                            data = myData_Train_All,
+                            method = 'lda', 
+                            trControl = trcntr)
+
+# LDA fitting including the predictors that passed the cleaning procedure
+fit_lda_clean = caret::train(activity ~.,         
+                             data = myData_Train_Clean, 
+                              method = "lda",
+                              trControl = trcntr)
+
+# LDA fitting including the interactions that increased my accuracy
+fit_lda_int = caret::train(activity ~. + m1_acc * m2_acc * m3_acc + sd1_gyro * sd2_gyro * sd3_gyro + spec_peak1_gyro * amp_range1_gyro + 
+                            spec_peak2_gyro * amp_range2_gyro + spec_peak3_gyro * amp_range3_gyro,
+                            data = myData_Train_All,
+                            method = 'lda', trControl = trcntr)
+
+# KNN
+fit_knn_all = caret::train(activity ~ .,
+                                    data = myData_Train_All,
+                                    method = 'knn', 
+                                    trControl = trcntr)
+
+fit_knn_clean = caret::train(activity ~ .,
+                                    data = myData_Train_Clean,
+                                    method = 'knn', 
+                                    trControl = trcntr)
+
+# KNNS
+fit_knns_all = caret::train(activity ~.,
+                                     data = myData_Train_All,
+                                     method = 'knn',
+                                     trControl = trcntr, 
+                                     preProcess = "scale")
+
+fit_knns_clean = caret::train(activity ~.,
+                                     data = myData_Train_Clean,
+                                     method = 'knn',
+                                     trControl = trcntr, 
+                                     preProcess = "scale")
+
+
+
+# Multinomial Regression after 35 predictors it gave an error so I didnt use it
+# fit_multi = caret::train(activity ~ AR1.n1_acc + AR2.n1_acc + AR3.n1_acc + AR1.n3_acc + AR2.n3_acc + AR3.n3_acc +  AR1.n5_acc + AR2.n5_acc + AR3.n5_acc + 
+#                                     AR1.n10_acc + AR2.n10_acc + AR3.n10_acc + AR12.n1_acc + AR13.n1_acc + AR23.n1_acc + AR12.n10_acc + AR13.n10_acc + 
+#                                     AR23.n10_acc + q1_25_x1_acc + IQR2_acc + IQR3_acc + skew1_acc + skew2_acc + skew3_acc + kurt1_acc + kurt2_acc + 
+#                                     kurt3_acc + max1_acc + max2_acc + max3_acc + var1_acc + var2_acc + var3_acc + pow2_acc + pow3_acc, 
+#                                     data = myData_Train_All,
+#                                     method = 'multinom', 
+#                                     trControl = trcntr)
+
+# QDA after 35 predictors it gave an error so I didnt use it
+# fit_qda = caret::train(activity ~ AR1.n1_acc + AR2.n1_acc + AR3.n1_acc + AR1.n3_acc + AR2.n3_acc + AR3.n3_acc +  AR1.n5_acc + AR2.n5_acc + AR3.n5_acc + 
+#                                    AR1.n10_acc + AR2.n10_acc + AR3.n10_acc + AR12.n1_acc + AR13.n1_acc + AR23.n1_acc + AR12.n10_acc + AR13.n10_acc + 
+#                                    AR23.n10_acc + q1_25_x1_acc + IQR2_acc + IQR3_acc + skew1_acc + skew2_acc + skew3_acc + kurt1_acc + kurt2_acc + 
+#                                    kurt3_acc + max1_acc + max2_acc + max3_acc + var1_acc + var2_acc + var3_acc + pow2_acc + pow3_acc, 
+#                                    data = myData_Train_All,
+#                                    method = 'qda', 
+#                                    trControl = trcntr)
+```
+
+## 6.2 Model Comparison
+
+```{r}
+# plot of the models
+models = list(lda_all = fit_lda_all, 
+              lda_clean = fit_lda_clean,
+              lda_int = fit_lda_int, 
+              knn_all = fit_knn_all, 
+              knn_clean = fit_knn_clean,
+              knns_all = fit_knns_all, 
+              knns_clean = fit_knns_clean)  
+
+# extract the cross-validated accuracies from each model
+Acc = sapply(models, function(mdl) max(mdl$results$Accuracy))
+             
+# make a barplot with only the best performing model in red
+color = 1 + (Acc >= max(Acc)) 
+barplot(Acc, horiz=T, las=1, col = color)
+
+# the most accurate model:
+bestmodel = names(Acc %>% sort(decreasing = TRUE))[1]
+
+# get text command for best model:
+bestmodel = paste("fit_", bestmodel, sep = "")
+
+# test eval command for best model:
+eval(parse(text = bestmodel))
+```
+
+# The final model
+According to this plot above, the knns_all model performs best. In one of my attempts I tried to use this model but it didn't perform Ill on the testdata because it overfit on my training model. That is why I Int with the second best model that seemed to overfit a bit less: the LDA_Int-model. This is the final model I used. 
+
+# 7. Data Wrangling and Predictions
+
+## 7.1 Loading my Test Data
+
+```{r}
+filenames_Acc_Test = dir("./RawData/Test/", "^acc", full.names = TRUE)
+filenames_Gyro_Test = dir("./RawData/Test/", "^gyro", full.names = TRUE)
+
+# map_dfr runs `extractTimeDomainFeatures` on all elements in 
+# filenames and binds results row wise
+myData_Acc_Test = map_dfr(filenames_Acc_Test, extractTimeDomainFeatures, sample_labels) 
+myData_Gyro_Test = map_dfr(filenames_Gyro_Test, extractTimeDomainFeatures, sample_labels) 
+
+# Check the result
+myData_Test = myData_Acc_Test %>%  
+        inner_join(myData_Gyro_Test, by = c('epoch', 'user_id', 'exp_id', 'activity', 'sampleid', 'n_samples'),
+                       suffix = c("_acc", "_gyro"))
+```
+
+## 7.3 Making Predictions
+
+```{r}
+pred = predict(fit_lda_int, new = myData_Test)
+
+myData_Test$predictions = pred
+head(pred)
+```
+
+# 8. Submissions
+
+
+The test data can be imported in the same way as the training data, you only have to change `Train` to `Test` in the directory path:
+
+```{r}
+filenames_test = dir("./RawData/Test/", "^acc", full.names = TRUE)
+
+filenames_test
+```
+
+## 8.1 Formatting the submission file
+
+
+```{r}
+myData_Test %>%
+
+    # prepend "user" and "exp" to user_id and exp_id
+    mutate(
+        user_id = paste(ifelse(user_id < 10, "user0", "user"), user_id, sep=""), 
+        exp_id = paste(ifelse(exp_id < 10, "exp0", "exp"), exp_id, sep="")
+    ) %>% 
+
+    # unit columnes user_id, exp_id and sample_id into a string 
+    # separated by "_" and store it in the new variable `Id`
+    unite(Id, user_id, exp_id, sampleid) %>%
+
+    # retain only the `Id` and  predictions
+    select(Id, Predicted = predictions) %>%
+
+    # write to file
+    write_csv("test_set_predictions.csv")
+
+
+# Check the result: print first 20 lines in the submission file
+cat(readLines("test_set_predictions.csv",20), sep="\n")
+```
+
+
