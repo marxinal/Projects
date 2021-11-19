@@ -34,8 +34,9 @@ KAGGLE_RUN = TRUE
 # You can see the files by running  
 
 if (KAGGLE_RUN){
-  list.files(path = "../input/")
-  dirs = dir("../input", pattern="[^g]$", recursive=TRUE, include.dirs = TRUE, full.names = TRUE)
+  list.files(path = "../Projects/ckplus")
+  dirs = dir("../Projects/ckplus", pattern="[^g]$", recursive=TRUE, 
+             include.dirs = TRUE, full.names = TRUE)
 } else {
   dirs = dir(pattern="[^g]$", recursive=TRUE, include.dirs = TRUE, full.names = TRUE)
 }
@@ -63,18 +64,10 @@ ok = file.copy(  happy[60], "happy.png", overwrite = TRUE)
 ok = file.copy(    sad[61],   "sad.png", overwrite = TRUE)
 ok = file.copy(  anger[61], "anger.png", overwrite = TRUE)
 ok = file.copy(disgust[61], "disgust.png", overwrite = TRUE)
-IRdisplay::display_html('<img src="happy.png" width="200" style="float:left" /><img src="sad.png" width="200" style="float:left" /><img src="anger.png" width="200" style="float:left" /><img src="disgust.png" width="200" style="float:left" />')
+
 ```
 
-Clearly the first is a happy face, but is the second a sad face, an angry face, or both?
-From inspecting the images, we could come up with a somewhat vague prediction for our algorithm. Namely, even to the human eye it seems so that a happy face is easiest to distingusih and label from the other facial expressions. For instance, it is noticeable that when a person smiles there are different contours and characteristics around both the eyes (half-closed eyes with upward and somewhat relaxed-looking eyebrows) and the mouth (e.g. an open smile although not necessarily) that are quite different to other facial expressions. This indicates that since it is by far the easiest for humans to classify a happy facial expression, we could argue the same will be the case for our algorithm. 
-
-
 # 2. Data considerations
-
-It's not difficult to find out how the data were collected. This is an important question to answer about any data set you use in a machine learning project because it will determine to what new data your model will generalize.
-
-Answer the 3 most important questions for any ML project:
 
 **1. Where do the data come from? (To which population will results generalize?)**
    The data came from the CK+ dataset. The obtained results from this statistical analysis will generalize to black & white photos representative of four emotions. Those are sadness, happiness, disgust, and anger. When taking into consideration the actual generalizability of the data, it is arguable that this dataset will not be able to generalize well to children and infants, but also other non Euro-American faces. The reason being that 81% of the dataset contains only Euro-American faces, and only 13% Afro-American and 6% other groups. Likewise, only adult faces were used for training purposes, in particular pariticipants were 18 to 50 years of age (Lucey, et al., 2010).
@@ -148,12 +141,12 @@ Similar to what we did with signals, here we use histograms of pixel intensities
 2. Distributional measures (specific shapes of histogram): 
 * Range 
 * Quartiles (25% Quartile Ranges, 75% Quartile Ranges)
-* Kurtosis: This measure describes the specific shape of a particular histogram where this shape is identified             by measuring the peakedness of the histogram. If it's a normal distribution the peakedness is 3,               which means that the most values are in and around the middel of the distribution. If it is not               normal distributed the peakedness of the histogram, ans thus the most values are in the sides.
-* Skewness: Skewness is measured by identifying assymmetry of a particular histogram. The histogram is                     balanced when there is zero-value. It is on the left tail when it is negative, and it is on the               right tail when it is positive.
+* Kurtosis: This measure describes the specific shape of a particular histogram where this shape is identified by measuring the peakedness of the histogram. If it's a normal distribution the peakedness is 3, which means that the most values are in and around the middel of the distribution. If it is not normal distributed the peakedness of the histogram, ans thus the most values are in the sides.
+* Skewness: Skewness is measured by identifying assymmetry of a particular histogram. The histogram is   balanced when there is zero-value. It is on the left tail when it is negative, and it is on the       right tail when it is positive.
 * Median Absolute Deviation (MAD):The absolute average distance between the mean and every data point.
 
 3. Spectral-inspired features:
-* Power: The power is the probability that the test will find a statistically significant difference between            the amplitude of the signals. Where it reflects the variance of the amplitude of the signals as well          as the squared mean summed.
+* Power: The power is the probability that the test will find a statistically significant difference between the amplitude of the signals. Where it reflects the variance of the amplitude of the signals as well as the squared mean summed.
 * Energy: The energy is a measure the localized change of the image. Source:          https://stackoverflow.com/questions/4562801/what-is-energy-in-image-processing
 * Full L amplitude: Each point at every (x,y) is called amplitude or intensity of an image. Amplitude image shows how the tip deflected as it encountered sample surface. Images are similar to topography showing the map of the slope of the sample, but Z scale is no in linear units. Using other words, amplitude image is the image of error signal of amf. Source: https://findanyanswer.com/what-is-amplitude-in-image-processing
 * Crest factor: Crest factor is a parameter of a waveform, such as alternating current or sound, showing the ratio of peak values to the effective value. In other words, crest factor indicates how extreme the peaks are in a waveform. As such can also be used for analysing histograms of pixel intensity. 

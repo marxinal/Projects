@@ -25,6 +25,7 @@ Sys.setenv(SPOTIFY_CLIENT_SECRET = '31f226ba27f84b92a7b7478771c1b265') # Super S
 
 access_token <- get_spotify_access_token()
 
+# getting the audio features from the custom-made playlists
 Jazz <- get_playlist_audio_features("", "0mv3GzFNlDNo37hLBe9IoH")
 Pop <- get_playlist_audio_features("", "6GCkgqdhLhKJbuWjJPvvYY")
 Classical <- get_playlist_audio_features("", "0M4d5tVMa4G0iYq0dpPbgk")
@@ -34,6 +35,8 @@ Synth <- get_playlist_audio_features("", "62eXlXm7DnT2t3i4h3iT9r")
 Anime <- get_playlist_audio_features("", "4XAccDSErLNtn0WZGkzm2N")
 Russ <- get_playlist_audio_features("", "6LvcvPC6l49iz6C9NtHBoc")
 
+
+# combining the data into a single format
 Data <-
   bind_rows(
     Jazz %>% mutate(playlist = "Jazz"),
@@ -50,10 +53,12 @@ Data$playlist <- as.factor(Data$playlist)
 
 biotools::boxM(Data[, c(6:16, 37)], Data$playlist)
 
+# defining the lda model 
 Model <- lda(playlist ~ loudness + speechiness + acousticness + instrumentalness + 
                tempo + liveness + mode + danceability + energy + key + valence + 
                track.popularity, Data)
 
+# performing cross-validation with the lda model 
 ModelCV <- lda(playlist ~ loudness + speechiness + acousticness + instrumentalness + 
                  tempo + liveness + mode + danceability + energy + key + valence + 
                  track.popularity, Data, CV = TRUE)
@@ -64,30 +69,32 @@ ModelCV <- lda(playlist ~ loudness + speechiness + acousticness + instrumentalne
 
 ## Linear Discrimination Plot
 
-```{r echo = FALSE}
+```{r}
 ModelProjection <- cbind(scale(as.matrix(Data[,c("loudness", "speechiness", 
                                                  "acousticness", "instrumentalness",
                                                  "tempo", "liveness", "mode", "danceability",
                                                  "energy", "key", "valence",
-                                                 "track.popularity")]),scale=FALSE) %*% 
-                           Model$scaling, Data[,"playlist",drop=FALSE])
+                                                 "track.popularity")]), scale=FALSE) %*% 
+                                                 Model$scaling, Data[,"playlist",drop=FALSE])
 
 ModelProjection %>%
   ggplot(aes(LD1, LD2, colour = playlist)) +
   scale_shape_manual(values = c(15:22)) +
   geom_point(aes(shape = playlist)) +
   labs(colour = "Playlist",
-       shape = "Playlist") +
+       shape = "Playlist",
+       title = 'Linear Discrimination Plot') +
   theme(text = element_text(family = "Fira Sans")) +
-  guides(color = guide_legend(override.aes = list(size=4))) +
-  scale_color_brewer(palette="Set1")
+  guides(color = guide_legend(override.aes = list(size = 4))) +
+  scale_color_brewer(palette = "Set1") +
+  theme_minimal()
 
 ```
 
 
 ## LOOCV Confusion Matrix
 
-```{r echo = FALSE}
+```{r}
 as.data.frame(table(Predicted = ModelCV$class, True = Data$playlist)) %>%
   ggplot(aes(Predicted, True)) +
   geom_tile(aes(fill = Freq)) + 
@@ -96,6 +103,8 @@ as.data.frame(table(Predicted = ModelCV$class, True = Data$playlist)) %>%
   theme(axis.text.x = element_text(angle = 90, hjust = 1),
         text = element_text(family = "Fira Sans"),
         legend.position = "none") +
+  labs(title = 'LOOCV Confusion Matrix',
+       caption = 'source = Spotify') +
   theme_minimal()
 
 ```
@@ -103,7 +112,7 @@ as.data.frame(table(Predicted = ModelCV$class, True = Data$playlist)) %>%
 
 ## Model Evaluation
 
-```{r echo = FALSE}
+```{r}
 TP <- NULL
 FP <- NULL
 TN <- NULL
@@ -158,7 +167,7 @@ modEval[,5:9]
 
 ## Predictions for my friend's playlist
 
-```{r echo = FALSE}
+```{r}
 Karel <- get_user_audio_features("1117862156", access_token)
 
 Karelpred <- predict(ModelCV, newdata = Karel)
@@ -168,5 +177,4 @@ ggplot(as.data.frame(Karelpred), aes(x = class)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         text = element_text(family = "Fira Sans")) +
   theme_minimal()
-
 ```

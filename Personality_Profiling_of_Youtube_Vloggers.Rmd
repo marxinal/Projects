@@ -1,7 +1,7 @@
 ---
 title: "Personality_Profiling_of_Youtube_Vloggers"
 author: "Jelena Kalinic"
-date: "11/16/2021"
+date: "11/09/2021"
 output: html_document
 ---
 
@@ -11,40 +11,33 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 # Calling the necessary libraries
-
 library(tidyverse) # metapackage with lots of helpful functions
 library(tidytext)
 library(dplyr)
 library(stringr)
 library(quanteda)
-
-# Input data files are available in the read-only "../input/" directory
-# For example, running this cell (by clicking ▶️, run or pressing Shift+Enter) will list 
-# all files under the "../input/" directory
-
-list.files(path = "../input")
 ```
 
 ```{r}
-directory_content <- list.files("../input/bda2021big5/youtube-personality", full.names = TRUE)
+# Creating a directory 
+directory_content <- list.files("../Projects/youtube-personality", full.names = TRUE)
 print(directory_content)
 ```
 
 ```{r}
 # Path to the transcripts directory with transcript .txt files
-path_to_transcripts <- directory_content[2] 
+path_to_transcripts <- directory_content[1] 
 ```
 
 ```{r}
 # .csv filenames (see output above)
-AudioVisual_file    <- directory_content[3]
-Gender_file         <- directory_content[4]
-Personality_file    <- directory_content[5]
-
+AudioVisual_file    <- directory_content[2]
+Gender_file         <- directory_content[3]
+Personality_file    <- directory_content[4]
 ```
 # 2. Data Import and Merging
 
-We'll import
+Importing data: 
 
 - Transcripts
 - Personality scores
@@ -58,16 +51,18 @@ transcript_files <- list.files(path_to_transcripts, full.names = TRUE)
 print(head(transcript_files))
 
 ```
-The transcript file names encode the vlogger ID that you will need for joining information from the different data frames. A clean way to extract the vlogger ID's from the names is by using the funcation `basename()` and removing the file extension ".txt".
 
+# Vlog ID import
 ```{r}
 vlogId = basename(transcript_files)
 vlogId = str_replace(vlogId, pattern = ".txt$", replacement = "")
 head(vlogId)
 ```
-To include features extracted from the transcript texts you will have to read the text from files and store them in a data frame. For this, you will need the full file paths as stored in `transcript_files`.
+To be able to include features extracted from the transcript texts first creating
+a data frame is needed.
 
 ```{r}
+# Creating a dataframe 
 transcripts_df = tibble(
     
     # vlogId connects each transcripts to a vlogger
@@ -85,9 +80,10 @@ transcripts_df %>%
 
 ```
 ## 2.2 Importing AudioVisual features
+```{r}
 audiovisual_df <- read_delim(AudioVisual_file, delim = " ")
+```
 ## 2.3 Import personality scores
-
 
 # Import the Personality scores
 ```{r}
@@ -122,8 +118,9 @@ tokenized_sentences <- transcripts_df %>%
 tokenized_words <- transcripts_df %>%
     unnest_tokens(token, Text, token = "words")
 ```
-```{r}
+
 # Words without Stop Words
+```{r}
 stopwords <- get_stopwords()
 
 tokenized_no_stop_words <- transcripts_df %>%
@@ -131,11 +128,12 @@ tokenized_no_stop_words <- transcripts_df %>%
     anti_join(stopwords, by = c(token = "word"))
 
 ```
+
 # 4. Feature extraction from transcript texts
 ## 4.1 Features
 In this section we extract our features. For the first round we extracted 9 features: the number of times "um" "uhm" or "uh" is used, NRC, BING, intonation,the number of syllables, the number of questions, the number of swear words, the number of pauses, and the number of self-eference words. After the first round we decided to add five more features from other groups: the average number of characters in a sentence, AFINN, wMEI, the relative frequency of the words "I" and "we" and the frequency of negation.
 ### Feature 1
-  #### Number of times the word "um" is used
+#### Number of times the word "um" is used
 The first feature is the number of times the words "um", "uhm", and "uh" are used. These are so called filler words to avoid silences. Even though a direct relationship between the use of filler words could not be shown in earlier research (Laserna et al., 2014), they could still indicate difficulty finding words to say which might be related to for example introversion.
 ```{r}
 nr_of_um <- tokenized_words %>%
@@ -156,8 +154,11 @@ Our second feature is the NRC. The NRC is a large database that enables us to as
 # Extracting NRC
 load_nrc <- function() {
     if (!file.exists('nrc.txt'))
-        download.file("https://www.dropbox.com/s/yo5o476zk8j5ujg/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt?dl=1","nrc.txt")
-    nrc <- read.table("nrc.txt", col.names = c('word','sentiment','applies'), stringsAsFactors = FALSE)
+        download.file(
+          "https://www.dropbox.com/s/yo5o476zk8j5ujg/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt?dl=1",
+          "nrc.txt")
+    nrc <- read.table("nrc.txt", col.names = c('word','sentiment','applies'), 
+                      stringsAsFactors = FALSE)
     nrc %>% filter(applies == 1) %>% 
         select(-applies)
 }
@@ -176,7 +177,7 @@ nrc_feature <- tokenized_no_stop_words %>%
 #### Bing
 Our third feature is Bing. Bing doesn't allow us to assign emotions to a word but it does let us classify words as positive or negative. The number of words in a text that are positive or negative might also tell us something about de personality of the speaker. Also since the distribution of postive and negative words is different in Bing than in NRC it seems sensible to use both.
 ```{r}
-Extracting Bing 
+# Extracting Bing 
 bing <- get_sentiments("bing")
 bing_feature <- tokenized_no_stop_words %>%
     inner_join(bing, by = c(token = "word")) %>%
@@ -189,7 +190,6 @@ bing_feature <- tokenized_no_stop_words %>%
 ### Feature 4 
 #### Intonation combined of 3 features 
 ##### (pitch, energy, and average voiced segments or the syllable length)
-
 Our fourth feature is intonation. Earlier research showed that intonation can be a very effective predictor for personality, when accessed by humans (Mohammadi et al., 2012). This indicates that data about intonation might also be effective in predicting personality. We divided intonation into three variables: pitch, energy and average voiced segments or the syllable length which is based on a study that Aydin et al. (2016) conducted. 
 ```{r}
 intonation_feature <- audiovisual_df %>%
@@ -200,7 +200,6 @@ intonation_feature <- audiovisual_df %>%
 #### Speeach Feature
 ##### Speaking time, speaking turns, and voicing rate
 Our fifth feature is the number of syllables that each vlogger uses. Earlier research has shown that this is an effective predictor for mainly agreeableness (Metha et al., 2020). Even though this study was on written text, this finding might also hold for speech. 
-
 ```{r}
 speech_feature <- audiovisual_df %>%
     select(vlogId, time.speaking, num.turns, voice.rate, avg.len.seg) %>%
@@ -212,6 +211,7 @@ Our sixth feature is the number of syllables that each vlogger uses. Earlier res
 download.file("https://bda2019syllables.netlify.com/en_syllable_3grams.csv.zip", "en_syllable_3grams.csv.zip") ## downloading the data base for syllables
 
 ```{r}
+download.file("https://bda2019syllables.netlify.com/en_syllable_3grams.csv.zip", "en_syllable_3grams.csv.zip") ## downloading the data base for syllables
 unzip("en_syllable_3grams.csv.zip")
 syldf <- read.csv("en_syllable_3grams.csv", check.names = FALSE, 
                  stringsAsFactor = FALSE)
@@ -234,7 +234,6 @@ nsyl_est <- function(word, betas) {  # creating a function that counts the numbe
    nsyl = betas[1] + features %*% betas[-1]
    return(drop(nsyl))
 }
-
 
 hat_beta = coef(fitlm) 
 
