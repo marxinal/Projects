@@ -53,7 +53,7 @@ print(labels)
 
 The data frame encodes the `start` and `end` sample for each subsequent activity in signal files, for each `trial` and `userid`.  
 
-What should be noticed is that some activities Ire repeated at different times during the recording, which results in multiple time (sample) windows in which the participant was for instance `WALKING_UPSTAIRS`.
+What should be noticed is that some activities were repeated at different times during the recording, which results in multiple time (sample) windows in which the participant was for instance `WALKING_UPSTAIRS`.
 
 For each user there are several files. Although you may be inclined to think in terms of "users" (as they are participants), it's easier to focus on the files, because there in some cases multiple files per user.
 
