@@ -135,7 +135,9 @@ Thus, models and techniques employed were:
 - Linear Discriminant Model (LDA)
 - K-Nearest Neighbour (KNN)
 - K-Nearest Neighbour scaled (KNNs)
-- K-fold (using 10 folds and a 80/20 split (training set vs test set) 
+with K-fold (using 10 folds and a 80/20 split (training set vs test set) 
+
+Additionally, variations of the aforementioned models were employed. Three types mainly: including all features, including only features that did not have high correlations with other features (collinearity), and those where some interaction terms were used (only for LDA). This resulted in 7 different models (LDA_all, LDA_clean, LDA_int, KNN_all, KNN_clean, KNNs_all, and KNNs_clean).
 
 <ins>Model Evaluation and Model Comparison:</ins> 
 LDA was chosen as the final model due to the highest *accuracy* compared to the other models.
