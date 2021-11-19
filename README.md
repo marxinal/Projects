@@ -42,8 +42,15 @@ Sensitivity, Specificity, Accuracy, Precision, Negative Predictive Value, and Ac
 - 8 genres
 
 <ins>Results:</ins> 
-
 Overall Model Accuracy = 76 %
+
+
+#### Kaggle Competitions 
+
+## Second Project
+
+### Title: 
+
 
 
 
