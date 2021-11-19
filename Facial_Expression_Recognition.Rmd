@@ -1,5 +1,7 @@
 ---
-title: Facial Expression Recognition
+title: "Facial Expression Recognition"
+author: "Jelena Kalinic"
+data:  "15/10/2021"
 output: html_document
 ---
 
@@ -11,7 +13,6 @@ output: html_document
 
 ```{r}
 ## Importing packages
-
 library(tidyverse) # metapackage with lots of helpful functions
 library(png) # package that can be used to read png image files in a simple format
 library(ggplot2)
@@ -26,7 +27,6 @@ KAGGLE_RUN = TRUE
 ```
 
 ## Importing Data
-
 ```{r}
 # Show the availabe directories
 # Reading in files
@@ -556,17 +556,20 @@ To compare the models above, we plot their accuracies on our hold-out validation
 accuracy <-
   data.frame(
     model = c("Random_forest", "Boosted_trees", "SVM", "LDA", "QDA"),
-    acc = c(cm_rf$overall[1], cm_gbm$overall[1], cm_svm$overall[1], cm_lda$overall[1],cm_qda$overall[1]),
-    acc_lb = c(cm_rf$overall[3], cm_gbm$overall[3], cm_svm$overall[3],cm_lda$overall[3],cm_qda$overall[3]),
-    acc_ub = c(cm_rf$overall[4], cm_gbm$overall[4], cm_svm$overall[4],cm_lda$overall[4],cm_qda$overall[4])
+    acc = c(cm_rf$overall[1], cm_gbm$overall[1], cm_svm$overall[1], cm_lda$overall[1],
+            cm_qda$overall[1]),
+    acc_lb = c(cm_rf$overall[3], cm_gbm$overall[3], cm_svm$overall[3],cm_lda$overall[3],
+               cm_qda$overall[3]),
+    acc_ub = c(cm_rf$overall[4], cm_gbm$overall[4], cm_svm$overall[4],cm_lda$overall[4],
+               cm_qda$overall[4])
   )
-accuracy<-accuracy %>% mutate(color = ifelse( acc == max(acc), "yes", "no" ) ) #from Physical Activity Recognition Group 3
+accuracy<-accuracy %>% mutate(color = ifelse(acc == max(acc), "yes", "no" ) ) #from Physical Activity Recognition Group 3
 
-# Plot the accuracies in a bar plot
-ggplot(accuracy,aes(x = reorder(model,-acc), y = acc ,fill = color,label = acc)) +
+# Plot the accuracy in a bar plot
+ggplot(accuracy,aes(x = reorder(model,-acc), y = acc ,fill = color, label = acc)) +
   geom_bar(stat = "identity", position = "dodge") +
-scale_fill_manual(values = c( "yes"="red", "no"="grey50" ), guide = "none")+
-  geom_errorbar(  # plot errorbars
+  scale_fill_manual(values = c( "yes" = "red", "no"="grey50" ), guide = "none")+
+  geom_errorbar(  # plot error bars
     aes(
       x = model,
       ymin = acc_lb,
@@ -577,9 +580,9 @@ scale_fill_manual(values = c( "yes"="red", "no"="grey50" ), guide = "none")+
     alpha = 0.9,
     size = 1.3
   ) +
-coord_flip()+
-theme(text = element_text(size=20))+
-labs(x ="", y = "Accuracy")
+  coord_flip()+
+  theme(text = element_text(size=20))+
+  labs(x ="", y = "Accuracy")
 ```
 
 We see that the SVM performs the best compared to the other methods, so we are going to use that as our final model. Also QDA performs better than LDA which might due to the size of the dataset, or due to the non-linear data. 
