@@ -123,11 +123,6 @@ Features that capture specific frequencies
 - Spectral features: The function spectrum() gives an estimation of the spectrum of a function. In order to be able to derive information about the nature of the function and more about the physical movements within my frequency domains, I estimated statistical features on the spectrum features. In particular I included features such as: spectral peak of a vector, spectral mean of a vector, spectral standard deviation of a vector, spectral entropy of a vector, spectral skewness and kurtosis of a vector, spectral mode and median of a vector. 
 - Zero-crossings: The frequency of certain physical activities crossing a zero-point. Since I assume differenct physical activities and their signals differ in their frequency of zero-point crossings (Gangadhar, Giridhar Akula, & Reddy, 2018). 
 
-** **
-- Bayat, A., Pomplun, M., & Tran, D. A. (2014). A Study on Human Activity Recognition Using Accelerometer Data from Smartphones. Procedia Computer Science, 34, 450–457. https://doi.org/10.1016/j.procs.2014.07.009
-- Gangadhar, Y., Giridhar Akula, V., & Reddy, P. C. (2018). An evolutionary programming approach for securing medical images using watermarking scheme in invariant discrete wavelet transformation. Biomedical Signal Processing and Control, 43, 31–40. https://doi.org/10.1016/j.bspc.2018.02.007
-- Konsolakis, K. (2018). Physical Activity Recognition Using Wearable Accelerometers in Controlled and Free-Living Environments (Nr. 6). TU Delft. http://resolver.tudelft.nl/uuid:af2e1786-ccc4-4592-afc8-b19819544f26
-
 <ins>Methods and Models employed:</ins> 
 I fitted an LDA, KNN, KNNS (knn scaled), and a multinomial and QDA with less features because they only worked that way. When I added more features, the QDA and multinomial stopped working. Important to note is that I chose a K of 10, because Hastie and Tibshirani explained that the best K to choose is between 5 and 10, I went for a K of 10 in order to have large variance in my data. The split of 80/20 was chosen because it was mentioned in the book Introduction to Statistical Learning (James et. al, 2013) that the possibility of bias will become high when there is less data to train on. 
 
@@ -144,4 +139,76 @@ LDA was chosen as the final model due to the highest *accuracy* compared to the 
 
 <ins>Results:</ins> 
 Results on the Kaggle competition showcased a total of 80.915% accuracy.
+
+References
+** **
+Bayat, A., Pomplun, M., & Tran, D. A. (2014). A Study on Human Activity Recognition Using Accelerometer Data from Smartphones. Procedia Computer Science, 34, 450–457. https://doi.org/10.1016/j.procs.2014.07.009
+Gangadhar, Y., Giridhar Akula, V., & Reddy, P. C. (2018). An evolutionary programming approach for securing medical images using watermarking scheme in invariant discrete wavelet transformation. Biomedical Signal Processing and Control, 43, 31–40. https://doi.org/10.1016/j.bspc.2018.02.007
+Konsolakis, K. (2018). Physical Activity Recognition Using Wearable Accelerometers in Controlled and Free-Living Environments (Nr. 6). TU Delft. http://resolver.tudelft.nl/uuid:af2e1786-ccc4-4592-afc8-b19819544f26
+
+
+## Third Project
+
+### Title: Personality Profiling of Youtube Vloggers
+
+Description: Building a model that will predict scores on the Big Five Personality Traits of Youtube Vloggers using different aspects of their videos. 
+
+Data: The YouTube personality dataset consists of a collection of behavorial features, speech transcriptions, and personality impression scores for a set of 404 YouTube vloggers that explicitly show themselves in front of the a webcam talking about a variety of topics including personal issues, politics, movies, books, etc. There is no content-related restriction and the language used in the videos is natural and diverse. For 80 of the 404 vloggers the personality impression scores are missing. The model is used to predict scores for these 80 vloggers.
+
+<ins>Dependent Variable:</ins> _(Big Five Personality Traits)_  
+- Extraversion
+- Neuroticism
+- Conscientiousness 
+- Agreeableness
+- Openess to Experience
+
+
+<ins>Predictors:</ins> _(Independent Variables/Features)_
+
+The predictors stemmed from three different aspects:
+1) Speech transcripts
+2) AudioVisual remarks (behavioural aspects) 
+3) Personality scores of other vloggers
+
+Based on the aforementioned, I constructed the following features:
+
+Features derived from the speech transcript texts: 
+
+- Number of times the word "um" is used
+  - The first feature is the number of times the words "um", "uhm", and "uh" are used. These are so called filler words to avoid silences. Even though a direct    
+    relationship between the use of filler words could not be shown in earlier research (Laserna et al., 2014), they could still indicate difficulty finding words     to say which might be related to for example introversion.
+- NRC lexicon
+  -The second feature is the NRC. The NRC is a large database that enables us to associate words with 8 common emotions, which are either negative or positive. How    much each emotion occurs in a text might tell us something about the personality of the speaker. In earlier research sentiment analysis using NRC was shown to      be an effective personality predictor (Christian et al. 2021).
+- Bing lexicon
+  - The third feature is Bing. Bing doesn't allow us to assign emotions to a word but it does let us classify words as positive or negative. The number of words in     a text that are positive or negative might also tell us something about de personality of the speaker. Also since the distribution of postive and negative     
+    words is different in Bing than in NRC it seems sensible to use both.
+- Count of Syllables 
+  - The sixth feature is the number of syllables that each vlogger uses. Earlier research has shown that this is an effective predictor for mainly agreeableness
+   (Metha et al., 2020). Even though this study was on written text, this finding might also hold for speech.
+- Number of questions
+  - The seventh feature is the number of questions in a vlog. Asking questions might for example be related to insecurity and thus introversion or to curiousness   
+    and thus opnenness to experience.
+- Swear words 
+  - The eight feature is the number of swear words that is used. The study of Metha et al. 2020 also showed this was an effective predictor for agreeabless
+    Besides that it also intuitively makes sense that the number of swear words would predict agreeableness (the more swear words the lower agreeableness)
+    and possibly other big five traits. 
+- Number of pauses
+  - The ninth feature is the number of pauses for each vlogger. Since there are a lot of ways pauses or silence can be used in speech Kostiuk (2012) so it might       predict personality in different ways. However if there are a lot of pauses this likely indicates difficulty finding words which might be associated with           introversion. 
+- Self-Reference/"I" Words 
+  - Our tenth feature is the use of self-reference words. Self-reference words are associated with multiple personality traits so their use might be a good
+    predictor for the Big Five. Earlier research showed for example an association between the use of the word "I" and neuroticism (Scully & Terry, 2011). 
+- Some additional features based on similar reasoning: 
+  - "We" Words Relative Frequency 
+  - Average Number of characters in a sentence
+  - AFINN 
+  - Negation frequency
+  - Mean Word Count Per Sentence
+
+<ins>Methods and Models employed:</ins> 
+- Here I employed a linear model along with stepwise regression methods (using the forward and the hybrid approach). Additionally, an alternative model with non-linear transformations was fitted in order to potentially increase the explained variance, and was thus compared to the primary model that does not violate the assumption of additivity. 
+
+<ins>Model Evaluation and Model Comparison:</ins> 
+
+
+
 
