@@ -316,9 +316,10 @@ pause_feature <- left_join(tibble(vlogId), nr_pauses, copy = TRUE) %>%
 ### Feature 10 
 #### Self-Reference/"I" Words 
 Our tenth feature is the us of self-reference words. Self-reference words are associated with multiple personality traits so their use might be a good predictor for the Big Five. Earlier research showed for example an association between the use of the word "I" and neuroticism (Scully & Terry, 2011). 
+```{r}
 transcript_with_stop <- transcripts_df %>%
     unnest_tokens(token, Text, token = "words")
-```{r}
+    
 selfreference <- transcript_with_stop %>% 
   filter(token == "i"  | token ==  "me" | token == "myself" | token == "i'm" | token == "mine" |
            token == "my") %>%
