@@ -1,0 +1,912 @@
+---
+title: "Amazon_Baby_Reviews"
+output: html_document
+---
+
+```{r}
+# Clear memory
+rm(list=ls())
+gc()
+
+## Importing packages
+
+library(tidyverse) # metapackage with lots of helpful functions
+library(tidytext)
+library(cowplot)
+library(ggpubr)
+library(dplyr)
+
+## Data attached to this notebook
+
+list.files(path = "../Projects/customer_reviews")
+```
+
+# 1. The project
+
+Here I am predicting customer sentiments regarding [Baby products purchased on Amazon.com](http://jmcauley.ucsd.edu/data/amazon/), on the basis of their written reviews. 
+
+
+# Our AnsIrs:
+  1. Where do the data come from? (To which population will results generalize?)
+ The data came from baby product reviews of products from amazon. The results will mostly generalize to people that bought or will buy amazon's baby products. The results also might generalize to reviews of baby products on other Ibshops.
+ 2. What are candidate machine learning methods? (models? features?)
+ Model selection criteria are rules used to select a statistical model among a set of candidate models, based on observed data. Candidate models are for instance algorithms that classify. I will use methods such as ridge regression and lasso regression, since I are trying to predict the satisfaction or dissatifaction of baby products which is a dichotomous/binary variable ("satisfied" = 1, "not satisfied" = 0). There are also other candidate machine learning methods: 
+- K-nearest-neighbours
+- Decision trees
+- Multivariate Linear Regression
+- Principal Component Analysis
+- Partial Least Squares,
+- Smoothing which increases the flexibilty by allowing non-linearities.
+- Naive Bayes & Support Vector Machines
+
+3. What is the Bayes' error bound?
+ I think that humans are fairly good at deciding whether a review is either positive or negative based on the understanding of human language and emotions, at least somewhat better than chance level, which is also supported by Lappeman and colleagues (2020). Therefore I assume that people should be able to classify about 65-70% correct. This will be the upper bound. Choosing randomly will be the loIr bound. 
+* * * * 
+Lappeman, J., Clark, R., Evans, J., Sierra-Rubia, L., & Gordon, P. (2020). Studying social media sentiment using human validated analysis. MethodsX, 7, 100867. https://doi.org/10.1016/j.mex.2020.100867
+
+# 2. Read Data
+
+Locate and load the data into memory.
+
+```{r}
+dir("../Projects/customer_reviews", recursive=TRUE)
+```
+
+```{r}
+# Find the right file path
+csv_filepath = dir("..", pattern = "amazon_baby.csv", recursive = TRUE, 
+                   full.names = TRUE)
+
+# Read in the csv file
+amazon = read_csv(csv_filepath) %>%
+    rownames_to_column('id') 
+```
+
+```{r}
+head(amazon)
+```
+
+The data frame contains both the train and test data. The test data are the reviews for which the rating is missing and you need to provide a prediction. 
+
+The following logical index variable will be of help selecting the desired rows without the need to split the data frame into seperate sets. This makes it easier to extract features.
+
+```{r}
+trainidx = !is.na(amazon$rating)
+table(trainidx)
+```
+
+From the above, there are 153,531 training samples and 30,000 test samples.
+
+# 3. Preprocessing
+
+The table contains, the product `name`, the textual `review`, and the `rating`. Should I use only the `review`'s or also the `name`? Clearly the products differ on quality which will cause the ratings to differ, so I want to include product identity as a predictive feature. How can I do this? There are several ways, but I'll use a trick: I'll prepend the product name to the review text. That is I will paste the `name` string and `review` string into a single string. In that way, I incorporate both product names and review text without haveing to handle product names separately. 
+
+Doing so will also handle another problem: Some of the reviews that are empty strings, and I wont be able to make a prediction for them. By pasting `name` and `review` I'll at least have the name to predict their rating. 
+
+Here is code for pasting `name` and `review` using the `unite()` function:
+
+```{r}
+# Paste name and review into a single string separated by a "–".
+# The new string replaces the original review.
+amazon = amazon %>% 
+    unite(review, name, review, sep = " — ", remove = FALSE)
+
+print(amazon)
+```
+
+# 3.1 Tokenization
+
+I'm going to use tidytext to break up the text into separate tokens and count the number of occurences per review. To keep track of the review to which the review belongs, I have added the rownames as `id` above, which is simply the row number. As tokens you can consider single words, pairs of words called bi-grams, or n-grams. 
+
+```{r}
+# Speed up the process
+doMC::registerDoMC(cores = 4)
+gc()
+
+reviews = amazon %>% 
+
+   # tokinize reviews at word level
+   unnest_tokens(token, review) %>%
+
+   # count tokens within reviews as 'n'
+   # (keep id, name, and rating in the result)
+   count(id, name, rating, token)
+
+head(reviews,6)
+```
+
+
+# 4. Features engineering
+
+Features computed for tokens in text are based on the Bag of Words (BoW) model: Each document is considered a bag of words, in which order plays no particular. Common features are
+
+
+- **document occurence**: 
+    > 0-1 encoding of the presence or absence of a token in a document (here: review)
+    
+- **token counts**: 
+    > simple counts $n_{t,d}$ of each token $t$ within documents $d$ (resulting in a document by term matrix, or DTM)
+
+- **term frequency ($TF_{d,t}$)**: 
+    > the relative frequency of a term within a document $\displaystyle {n_{d,t} \over \sum_t n_{d,t}}$
+
+- **inverse document frequency ($IDF_t$)**: 
+    > inverse the relative frequency with which a term occurs among the $N$ documents, expressed on a log scale (a measure of 'surprise') as  $-\log\left({DF_t \over N}\right)$ Here $DF_t$ is the number of documents that contain the token $t$.
+
+- **the $TFIDF_{d,t}$**: 
+    > the product of TF and IDF
+
+- **vector space embeddings**: 
+    > advanced features like factor loadings (eigen vectors) from a PCA of the DTM, or "word2vec" representations of words, sentences, and paragraphs (not discussed here), usually obtained by training neural networks on a very large corpus
+
+
+The motivation for $TF_{d,t}$ is simply that the more often a token $t$ occurs in a document, the more likely it is that the topic of the document is closely related to that token. A problem of $TF_{d,t}$ is that it does not take into account that certain words simply occur more frequently because of their role in language (such as 'a', 'but', etc.). 
+
+The motivation for the $IDF_t$ is that the more wide spread the use of a token $t$ is among all documents, the less likely it conveys information about the topic of any particular document. Hence, the more surprising a word is, the more likely it conveys information about the topic of the document in which it is found. 
+
+The $TFIDF_{d,t}$ banks on both of these ideas and quantifies the important of a term for a given document. 
+
+While $TFIDF_{d,t}$ is extensively applied and very successful in document retrieval systems (i.e., search engines), the $IDF_t$ part has much less use over $TF_{d,t}$ in *predictive* models because the $IDF_t$ part simply scales the $TF_{d,t}$ features accros documents. This scaling may have an effect on scale sensitive algorithms like PCA and algorithms that rely on Euclidean distances such as kNN. 
+
+(Btw: While linear and logistic regression are scale insensitive because they can absorb scale differences in the regression coefficients, LDA and QDA are insenstive to scaling because the compute Mahalanobis distance and not Euclidean distance. The Mahalanobis distance is the Euclidean distance after standardizing in SVD space.)
+
+##### Feature Extraction
+
+# I designed the following features:
+
+# Term Frequency - Inverse Document Frequency Features
+- The **TF-IDF based on single words**, without filtering for the stopwords
+- The **TF-IDF based on bigrams**, which I also did not filter on stopwords. I found this to be a very useful feature for sentiment analysis (Tan, Wang & Lee, 2002). 
+- The **TF-IDF based on trigrams** also without filtering for the stopwords. Again, trigrams Ire also found to be useful feature for sentiment analysis (Wu, Li, & Xu, 2006). 
+
+# Features regarding counts of the Reviews
+- **Word Count** per Review
+- **Sentence Count** per Review
+(Ren & Hong, 2017)
+
+# Sentiment Features
+- **The NRC sentiment score**: Lists associations of words with eight emotions (anger, fear, anticipation, trust, surprise, sadness, joy, and disgust) and two sentiments (negative and positive)
+- **The Bing sentiment score**: The bing lexicon categorizes words in a binary fashion into positive and negative categories. 
+- **The Afinn sentiment score**: The Afinn lexicon assignes words with a score betIen -5 and 5, where negative scores indicate a negative sentiment and positive scores indicate a positive sentiment.
+
+# Features of specific sentiment words 
+- **Swear Words**: Another valid linguistic correlate of sentiments is swearing (Hashimi, Hafez & Mathkour, 2015)
+- **Negation Words Feature**: Negations are words like no, not, and never. When people want to express the opposite meaning of a particular word or sentence, this is done by inserting a specific negation. Negating words have a correlation with other words in that sentence and I assume they are useful for predicting the sentiments. 
+- **Function Words (Functors) Feature**: These are words that have little lexical meaning or that have ambiguous meaning which express grammatical relationships among other words within a sentence, or specify the attitude or mood of the speaker. Therefore I assumed this to be a feature of use. 
+- **Pronouns Feature**: A pronoun is a word that takes the place of a noun. So words like: "I", "me", "he", "she", "herself", "you", "everybody" etc.
+- **Preposition Feature**: These are words or a group of words that are used before a noun, pronoun, or noun phrase to show direction, time, place, location, spatial relationships, or to introduce an object. These are words like "in," "at," "on," "of," and "to etc. 
+(Liang, Sun, Sun, & Gao, 2017)
+
+** **
+Tan, C. M., Wang, Y. F., & Lee, C. D. (2002). The use of bigrams to enhance text categorization. Information Processing & Management, 38(4), 529–546. https://doi.org/10.1016/s0306-4573(01)00045-0
+
+Hashimi, H., Hafez, A., & Mathkour, H. (2015). Selection criteria for text mining approaches. Computers in Human Behavior, 51, 729–733. https://doi.org/10.1016/j.chb.2014.10.062
+
+Wu, S. T., Li, Y., & Xu, Y. (2006). Deploying Approaches for Pattern Refinement in Text Mining. Sixth International Conference on Data Mining (ICDM’06). Published. https://doi.org/10.1109/icdm.2006.50
+
+Liang, H., Sun, X., Sun, Y., & Gao, Y. (2017). Text feature extraction based on deep learning: a review. EURASIP Journal on Wireless Communications and Networking, 2017(1). https://doi.org/10.1186/s13638-017-0993-1
+
+Ren, G., & Hong, T. (2017). Investigating Online Destination Images Using a Topic-Based Sentiment Analysis Approach. Sustainability, 9(10), 1765. https://doi.org/10.3390/su9101765
+
+Zhang, L., Hua, K., Wang, H., Qian, G., & Zhang, L. (2014). Sentiment Analysis on Reviews of Mobile Users. Procedia Computer Science, 34, 458–465. https://doi.org/10.1016/j.procs.2014.07.013
+
+## TF-IDF Single Words Feature
+
+```{r}
+# TFIDF feature (All Data)
+to_tf_idf = reviews %>%
+    bind_tf_idf(token, id, n) %>%
+
+# Delete near zero variance features
+    filter(idf <= -log(0.01/100)) %>%
+
+ # Words that are not present are NA's but should be 0
+    replace_na(list(tf=0, idf=Inf, tf_idf=0))
+```
+
+## TF-IDF Bigrams Feature
+
+```{r}
+# Extracting Bigrams
+bigrams = amazon %>% 
+  unnest_tokens(bigram, review, "ngrams", n = 2) %>% 
+  count(id, name, rating, bigram)
+
+# Bigram TFIDF feature
+tf_idf_bigrams = bigrams %>%
+   bind_tf_idf(bigram, id, n) %>%
+
+# Delete near zero variance features
+   filter(idf <= -log(0.5/100)) %>%  # I chose a somewhat arbitrary threshold, but higher cut-off value so I minimize the number of features
+
+    # Words that are not present are NA's but should be 0
+   replace_na(list(tf=0, idf=Inf, tf_idf=0)) %>%
+   rename(token = bigram) %>%
+   select(id, token, rating, tf_idf)
+
+head(tf_idf_bigrams, 6)
+
+rm(bigrams)
+gc()
+```
+
+## TF-IDF Trigrams Feature
+
+```{r}
+# Extracting Trigrams
+trigrams = amazon %>%
+ unnest_tokens(trigram, review, "ngrams", n = 3) %>% 
+ count(id, name, rating, trigram)
+
+# Trigram TFIDF feature
+tf_idf_trigrams = trigrams %>%
+   bind_tf_idf(trigram, id, n) %>%
+
+# Delete near zero variance features
+   filter(idf < -log(0.5/100)) %>% # I chose a somewhat arbitrary threshold, but higher cut-off value so I minimize the number of features
+
+
+# Words that are not present are NA's but should be 0
+  replace_na(list(tf=0, idf=Inf, tf_idf=0)) %>%
+  rename(token = trigram) %>%
+  select(id, token, rating, tf_idf)
+
+rm(trigrams)
+gc()
+```
+
+## Word Count Feature
+
+```{r}
+# Creating a Function to Count Words for each review
+wordcountR_feature = reviews %>%
+    group_by(id) %>%
+    summarize(wordcount = n())
+```
+
+## NRC Feature
+
+```{r}
+
+# Extracting NRC
+load_nrc = function() {
+    if (!file.exists('nrc.txt'))
+        download.file("https://www.dropbox.com/s/yo5o476zk8j5ujg/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt?dl=1","nrc.txt")
+    nrc <- read.table("nrc.txt", col.names = c('word','sentiment','applies'), stringsAsFactors = FALSE)
+    nrc %>% filter(applies == 1) %>% 
+        select(-applies)
+}
+
+# Loading NRC
+nrc = load_nrc()
+
+# Creating a Function to Extract NRC Sentiments 
+nrc_feature = reviews %>%
+    inner_join(nrc, by = c(token = "word")) %>%
+    group_by(id, sentiment) %>%
+    full_join(wordcountR_feature, by = "id") %>%
+    summarize(token = paste(sentiment, "nrc", sep="_"),
+              rating = rating,
+              
+    # Name the proportion tf_idf so I can use it for the matrix
+              tf_idf = n() / wordcount) %>%
+    select(rating, id, token, tf_idf) %>%
+    distinct(id, sentiment, .keep_all = TRUE)
+```
+
+## Bing Feature
+
+```{r}
+# Extracting Bing 
+bing = get_sentiments("bing")
+
+# Creating a Function to Extract Bing Sentiments
+bing_feature = reviews %>%
+    inner_join(bing, by = c(token = "word")) %>%
+    group_by(id, sentiment) %>%
+    full_join(wordcountR_feature, by = "id") %>%
+    summarize (token = paste(sentiment, "bing", sep = "_"),
+               rating = rating,
+               tf_idf = n()/wordcount) %>%
+    select(rating, id, token, tf_idf) %>%
+    distinct(id, sentiment, .keep_all = TRUE)
+    
+```
+
+## Swear Words Feature
+
+```{r}
+# Extracting swear Words
+swear_words_url = "http://www.bannedwordlist.com/lists/swearWords.txt"
+download.file(swear_words_url, destfile = "swear_words.txt") 
+swear_words = tibble(read.table("swear_words.txt", 
+                                stringsAsFactor = FALSE, 
+                                sep = ","))
+
+# Creating a Function to Count the Number of swear Words in each Review
+swear_feature = reviews %>%
+         filter(token %in% swear_words$V1) %>%
+         group_by(id) %>%
+         mutate(id = id, token = token, n = sum(n)) %>%
+         full_join(wordcountR_feature, by = "id") %>%
+
+# for all those reviews that have 0 count of swear words I assign 0 
+         replace_na(list(n = 0)) %>% 
+         mutate(tf_idf = n / wordcount) %>%
+         select(id, tf_idf, token) %>%
+         distinct(id, .keep_all = TRUE)
+```
+
+## Afinn Feature
+
+```{r}
+# Extracting Afinn 
+
+download.file("http://www2.imm.dtu.dk/pubdb/edoc/imm6010.zip","afinn.zip")
+ unzip("afinn.zip")
+ afinn = read.delim("AFINN/AFINN-111.txt", sep="\t", col.names = c("word","score"), 
+                   stringsAsFactors = FALSE)
+
+# Creating a Function to Extract Affin Sentiments
+
+afinn_feature = reviews %>%
+    inner_join(afinn, by = c(token = 'word')) %>%
+    group_by(id) %>%
+    full_join(wordcountR_feature, by = "id") %>%
+    summarise (tf_idf = sum(score)/wordcount, token = token) %>%
+    distinct(id, .keep_all = TRUE)
+```
+
+## Negation Words Feature
+
+```{r}
+# Extracting Negation Words
+negation_url = "https://www.grammarly.com/blog/negatives/"
+negation_words = readLines(negation_url)[63:89] %>%
+  str_replace("<li>", "") %>% 
+  str_replace("</li>", "") %>%
+  tibble(word = .) %>%
+  filter(!grepl(" ", word),
+         !grepl("<", word),
+         word != "") %>% 
+  mutate(word = str_to_loIr(word))
+
+# Creating a Function to Extract the Count of Negation Words
+negation_feature = reviews %>%
+         filter(token %in% negation_words$word) %>%
+         group_by(id) %>%
+         mutate(id = id, token = token, n = sum(n)) %>%
+         full_join(wordcountR_feature, by = "id") %>%
+
+# for all those reviews that have 0 count of negation words I assign 0 
+         replace_na(list(n = 0)) %>% 
+         mutate(tf_idf = n / wordcount) %>%
+         select(id, tf_idf, token) %>%
+         distinct(id, .keep_all = TRUE)
+```
+
+## Function Words (Functors) Feature
+
+```{r}
+# Extracting Function Words
+Function_Words = as_tibble(lexicon::function_words)
+
+# Making a Function for Functors
+function_words_feature = reviews %>%
+  filter(token %in% Function_Words$value) %>%
+  group_by(id) %>%
+  mutate(id = id, token = token, n = sum(n)) %>%
+  full_join(wordcountR_feature, by = "id") %>%
+
+# for all those reviews that have 0 count of function words I assign 0 
+  replace_na(list(n = 0)) %>% 
+  mutate(tf_idf = n / wordcount) %>%
+  select(id, tf_idf, token) %>%
+  distinct(id, .keep_all = TRUE)
+```
+
+## Pronouns Feature
+
+```{r}
+# Extracting Pronouns
+Pronouns = as_tibble(lexicon::pos_df_pronouns)
+
+# Making a Function for Pronouns 
+pronouns_feature = reviews %>%
+  filter(token %in% Pronouns$pronoun) %>%
+  group_by(id) %>%
+  mutate(id = id, token = token, n = sum(n)) %>%
+  full_join(wordcountR_feature, by = "id") %>%
+
+# for all those reviews that have 0 count of pronouns I assign 0 
+  replace_na(list(n = 0)) %>% 
+  mutate(tf_idf = n / wordcount) %>%
+  select(id, tf_idf, token) %>%
+  distinct(id, .keep_all = TRUE)
+```
+
+## Preposition Feature
+
+```{r}
+# Extracting Prepositions 
+ Prepositions = as_tibble(lexicon::pos_preposition)
+
+# Making a Function for Prepositions
+ prepositions_feature = reviews %>%
+ filter(token %in% Prepositions$value) %>%
+ group_by(id) %>%
+ mutate(id = id, token = token, n = sum(n)) %>%
+ full_join(wordcountR_feature, by = "id") %>%
+
+# for all those reviews that have 0 count of function words I assign 0 
+  replace_na(list(n = 0)) %>% 
+  mutate(tf_idf = n / wordcount) %>%
+  select(id, tf_idf, token) %>%
+  distinct(id, .keep_all = TRUE)
+```
+
+The resulting data frame allows us to relate `rating` to the number stopwords in the review, and check if this relation is statistical significant. To make sure the relation isn't caused by the total number of tokens `N`, I correct for it in the regression:
+
+## Non-zero variance features
+
+Features that have almost no variance across cases cannot provide a lot of information about the target variable. Variance across cases is the leading principle in any data context. For binary and count data as considered here the variance is determined by the average (that's a mathetmatical fact). Hence, for the current data I can look simply at document frequencies and do not need to compute variances. 
+
+I will remove tokens that occur in less than 0.01% of the documents (there are ~180,000 reviews in the data set; less than 0.01% &times; 180,000 reviews = 18 of the reviews). The number 0.01% is quite arbitrary, but will remove idiosyncratic strings and miss-spellings that occur only in singular reviews. 
+
+Since $IDF_t$, the column `idf`, which measures the surprise of a `token` $t$, is computed as 
+
+$$IDF_t = -\log\left({\text{df}_t \over N}\right) = -\log(\text{proportion of document in which }t\text{ occurs})$$ 
+
+I can filter the rows in `features` for which $-\log(\text{df}_t / N) \leq -\log(0.01\%)$ (i.e., the 'surprise' should be loIr than $-\log(0.01/100)$).
+
+
+**REMOVE NZV REGARDING OUR FEATURES**
+
+I should also remove Near Zero Variance Features at our additional features, so I can use the caret package for this
+
+```{r}
+# Checking for features with near zero variance
+
+## nrc check for non zero variance
+nrc_var_check =
+nrc_feature %>%
+    select(id, sentiment, tf_idf) %>%
+    group_by(id) %>%
+    pivot_wider(names_from = sentiment, values_from = tf_idf)
+
+nrc_var_check = nrc_var_check[, -12]
+
+## bing check for non zero variance
+bing_var_check =
+bing_feature %>%
+    select(id, sentiment, tf_idf) %>%
+    group_by(id) %>%
+    pivot_wider(names_from = sentiment, values_from = tf_idf)
+
+bing_var_check = bing_var_check[, -4]
+
+## Afinn var check
+afinn_var_check = afinn_feature %>% 
+    select(id, tf_idf) %>%
+    mutate(tf_idf = ifelse(is.na(tf_idf), 0, tf_idf)) %>%
+    rename(afinn_score = tf_idf)
+
+## swear var check
+ swear_var_check = swear_feature %>% 
+    select(id, tf_idf) %>%
+    mutate(tf_idf = ifelse(is.na(tf_idf), 0, tf_idf)) %>%
+    rename(swear_score = tf_idf)
+
+## Negation var check
+negation_var_check = negation_feature %>% 
+    select(id, tf_idf) %>%
+    mutate(tf_idf = ifelse(is.na(tf_idf), 0, tf_idf)) %>%
+    rename(negation = tf_idf)
+
+## Function words var check
+ function_words_var_check = function_words_feature %>% 
+    select(id, tf_idf) %>%
+    mutate(tf_idf = ifelse(is.na(tf_idf), 0, tf_idf)) %>%
+    rename(function_words = tf_idf)
+
+## Pronouns var check
+pronouns_var_check = pronouns_feature %>% 
+    select(id, tf_idf) %>%
+    mutate(tf_idf = ifelse(is.na(tf_idf), 0, tf_idf)) %>%
+    rename(pronouns = tf_idf)
+
+## Prepositions var check
+  prepositions_var_check = prepositions_feature %>% 
+  select(id, tf_idf) %>%
+  mutate(tf_idf = ifelse(is.na(tf_idf), 0, tf_idf)) %>%
+  rename(prepositions = tf_idf)
+
+## Combine features
+near_zero_var =
+ nrc_var_check %>% 
+    left_join(bing_var_check, by = "id") %>%
+    left_join(afinn_var_check, by = "id") %>%
+    left_join(swear_var_check, by = "id") %>%
+    left_join(negation_var_check, by = "id") %>%
+    left_join(function_words_var_check, by = "id") %>%
+    left_join(pronouns_var_check, by = "id") %>%
+    left_join(prepositions_var_check, by = "id")
+
+## Identify near zero variance features
+caret::nearZeroVar(near_zero_var)
+
+## Storing colnames with near zero variance
+colnames(near_zero_var[, 15:16])
+
+## Clear memory
+rm(pronouns_var_check,swear_var_check, prepositions_var_check,function_words_var_check,
+   negation_var_check, afinn_var_check, bing_var_check, nrc_var_check)
+```
+
+## Create linear model to identify best predictors
+
+```{r}
+linear_model = reviews %>%
+    select(id, rating) %>%
+    left_join(near_zero_var, by = c(id = "id"))
+
+lm_fit = lm(rating ~. -id, data = na.omit(linear_model))
+summary(lm_fit)
+
+rm(linear_model, lm_fit, load_nrc, nrc, bing, swear_words_url,
+   swear_words, affin, negation_url, Function_Words, Pronouns, Prepositions)
+gc()
+
+```
+
+Based on the Non Zero Variance analysis and Linear Regression I decided to remove function words, swear words, negation words, and prepositions as our features. 
+
+```{r}
+rm(swear_feature, function_words_feature, negation_feature, prepositions_feature)
+```
+
+## Combining All of the Features
+
+I based my final feature selection on a combination of the linear model and the features who didn't contain a lot of variations. I decided to leave out prepositions, function words, swear words and trigrams.
+
+```{r}
+# Combining them with Other Features
+features_all =  to_tf_idf %>% 
+                        bind_rows(tf_idf_bigrams, tf_idf_trigrams, nrc_feature,
+                                   pronouns_feature, afinn_feature, bing_feature) %>%
+                        select(id, tf_idf, token, rating) %>%
+                        
+                        # Delete all NA values for token
+                        filter(!is.na(token))  
+
+rm(tf_idf_bigrams, tf_idf_trigrams, nrc_feature, 
+    pronouns_feature, afinn_feature, bing_feature)
+```
+
+
+# 5. Models
+
+## Not relying on manual feature selection
+
+In the Personality competition I computed features by utilizing word lists that in previous research Ire found to be predictive of sentiment. This requires substantial input from experts on the subject. If such knowledge is not (yet) available a process of trial and error can be used. But with many thousands of features automation of this process is essential. 
+
+
+In addition forward and/or backward selection, automated methods that try to automatically ballance flexibility and predictive performance are
+
+1. Lasso and Ridge regression
+2. Principal Components and Partial Least Squares regression
+3. Smoothing 
+4. Regression and Classification trees (CART)
+5. Random Forests
+6. Support Vector Machines
+
+Methods (1) and (2) on this list involve methods are able to take many features while automatically reducing redundant flexibility to any desired level. Multicollinearity, the epithome of reduancy, is also automatically taken care of by these methods.
+
+Number (3) on the list, smoothing, grants more flexibility by allowing for some non-linearity in the relations betIen features and the target variable, without the need to manually specify a specific mathematical form (as is necessary in polynomial regression).
+
+Methods (4), (5), and (6) are not only able to remove redundant features, but also can automatically recognize interactions betIen  features.
+
+Hence, all of these methods remove the necessity of finding the best features by hand. 
+
+All of these methods are associated with a small set of 1 to 3 (or 4 in some cases) parameters that control the flexibility of the model in a more or less continuous way&mdash;much like the $k$ parameter in k-nearest neighbers. Like the $k$ parameter in k-NN, these parameters can and need to be adjusted (*'tuned'*) for optimal predictive performance. Tuning is best done on a validation set (a subset from the training data), or using cross-validation, depending on the size of the data set.
+
+# 5.1 Model fitting
+
+Not all algorithms can deal with sparse matrices. For instance `lm()` can't. The package `glmnet`, which is extensively discussed in chapter 6 of ISLR, has a function with the same name `glmnet()` which can handle sparse matrices, and also allow you to reduce the model's flexibility by means of the Lasso penalty or ridge regression penalty. Furthermore, like the standard `glm()` function, it can also handle a variety of dependent variable families, including gaussian (for linear regression), binomial (for logistic regression), multinomial (for multinomial logistic regression), Poisson (for contingency tables and counts), and a few others. It is also quite caple of dealing computationally efficiently with the many features I have here.
+
+> <span style=color:brown>The aim of this competition is the predict the probability that a customer is ***satisfied***. This is deemed to be the case if `rating > 3`.  Hence, you will need as a dependent variable `y` a factor that specifies whether this is the case. </span>
+
+The performance of your submission will be evaluated using the area under the curve (AUC) of the receiver operating curve (ROC). See chapter 4 in the ISLR book. See also the help file for how `cv.glmnet` can works with this measure.
+
+As said, `glmnet()` allows you to tune the flexibility of the model by means of _regularizing_ the regression coefficients. The type of regularization (i.e., the Lasso or ridge) that is used is controled by the `alpha` parameter. Refer to the book for an explanation. The amount of regularization is specified by means of the `lambda` parameter. Read the warning in the `help(glmnet)` documentation about changing this parameter. To tune this parameter look at the `cv.glmnet()` function.
+
+```{r}
+# Create sparse matrix
+X = features_all %>%
+    cast_sparse(id, token, tf_idf) %>%
+    .[!is.na(rownames(.)),]
+        
+            
+X[1:8,20:25]
+cat("rows, columns: ", dim(X))
+
+# Creating Positive Review Variable for y (coding 0 and 1)
+
+train_data = amazon[trainidx,]
+test_data = amazon[!trainidx,]
+
+# Creating Test and Train Matrices
+train_dataX = X[rownames(X) %in% train_data$id, ]
+
+dim(train_dataX)
+
+test_dataX = X[rownames(X) %in% test_data$id, ]
+
+ dim(test_dataX)
+
+# Target variable
+mean_ratings = features_all %>% 
+                        group_by(id) %>%
+                        summarise(mean_rat = mean(rating, na.rm = TRUE))
+y_train = mean_ratings %>%
+            filter(!is.nan(mean_rat)) %>%
+            transmute(rating_cat = ifelse(mean_rat > 3, 1,0)) %>%
+            pull() %>%
+            as.factor() 
+           
+
+
+rm(mean_ratings, reviews)
+gc()
+```
+
+```{r}
+# Fit Lasso model
+lasso_fit_train = glmnet::cv.glmnet(train_dataX,
+                                    y_train, 
+                                    type.measure = "auc",
+                                    family = "binomial",
+                                    nfolds = 8,
+                                    alpha = 1,
+                                    parallel = TRUE)
+
+
+# Fit Ridge model
+ridge_fit_train = glmnet::cv.glmnet(train_dataX, 
+                                y_train,  
+                                type.measure = "auc", 
+                                family = "binomial", 
+                                nfolds = 8,
+                                alpha = 0,
+                                parallel = TRUE)
+```
+
+Here I get the 'lambda.1se' which represents the largest value of lambda such that the error is within 1 standard error of the minimum. I include these lambda.1se Predictions in our model comparison:
+
+### Plotting the Model Fits
+
+```{r}
+lasso_plot = plot(lasso_fit_train)
+ridge_plot = plot(ridge_fit_train)
+```
+
+The plots show the optimal lambda based on AUC, which is betIen the two vertical lines. The two vertical lines represent the standard error which are computed using Cross-Validation. The numbers on top are the number of nonzero coefficient estimates.
+
+### Plotting Feature Importance
+
+##### Lasso Fit Feature Iight Plots
+
+```{r}
+# Getting the Coefficients of Features from Lasso Regression
+coefficients_lasso = lasso_fit_train %>%
+                       coef() 
+coefficients_lasso_summary = summary(coefficients_lasso)
+
+
+# Highest Positive Standaridized Iights 
+
+coefficients_lasso_plot_pos = data.frame(feature = rownames(coefficients_lasso)[coefficients_lasso_summary$i], 
+                                     Iight = as.numeric(scale(coefficients_lasso_summary$x))) %>%
+                          slice_max(Iight, n = 20) %>%
+                          filter(feature != "(Intercept)") %>%
+                          ggplot(aes(x = reorder(as.factor(feature), Iight), y = Iight)) +
+                          geom_bar(stat = "identity", aes(fill = Iight)) +
+                          paletteer::scale_fill_paletteer_c("scico::tokyo") +
+                          theme_bw() +
+                          coord_flip() +
+                          labs(x = "Features",
+                               y = "Iights of Features",
+                               title = "Highest Positive Standardized Iights",
+                               subtitle = "Lasso Model Fit")
+
+# Highest Negative Standardized Iights 
+
+coefficients_lasso_plot_neg = data.frame(feature = rownames(coefficients_lasso)[coefficients_lasso_summary$i], 
+                                     Iight = as.numeric(scale(coefficients_lasso_summary$x))) %>%
+                          slice_min(Iight, n = 20) %>%
+                          filter(feature != "(Intercept)") %>%
+                          ggplot(aes(x = reorder(as.factor(feature), Iight), y = Iight)) +
+                          geom_bar(stat = "identity", aes(fill = Iight)) +
+                          paletteer::scale_fill_paletteer_c("scico::tokyo") +
+                          theme_bw() +
+                          coord_flip() +
+                          labs(x = "Features",
+                               y = "Iights of Features",
+                               title = "Highest Negative Standardized Iights",
+                               subtitle = "Lasso Model Fit")
+
+plot(coefficients_lasso_plot_pos)
+plot(coefficients_lasso_plot_neg)
+```
+
+ In a linear regression with lasso regularization, as noticeable in the plots, for positive reviews words such as "4 stars", "indifferent", "glamorous", and "great" seem to indicate a positve or a satisfied review more than others. On the other hand, for negative or unsatisfied reviews, words such as "manipulation", "aggrevates","ashame" and "bore" seem to be important predictors. 
+
+##### Ridge Fit Feature Iight Plots
+
+```{r}
+# Getting the Coefficients of Features from Ridge Regression
+coefficients_ridge = ridge_fit_train %>%
+                       coef() 
+coefficients_ridge_summary = summary(coefficients_ridge)
+
+
+# Highest Positive Standaridized Iights 
+coefficients_ridge_plot_pos = data.frame(feature = rownames(coefficients_ridge)[coefficients_ridge_summary$i], 
+                                     Iight = as.numeric(scale(coefficients_ridge_summary$x))) %>%
+                          slice_max(Iight, n = 20) %>%
+                          filter(feature != "(Intercept)") %>%
+                          ggplot(aes(x = reorder(as.factor(feature), Iight), y = Iight)) +
+                          geom_bar(stat = "identity", aes(fill = Iight)) +
+                          paletteer::scale_fill_paletteer_c("scico::berlin") +
+                          theme_bw() +
+                          coord_flip() +
+                          labs(x = "Features",
+                               y = "Iights of Features",
+                               title = "Highest Positive Standardized Iights",
+                               subtitle = "Ridge Model Fit")
+
+# Highest Negative Standardized Iights 
+coefficients_ridge_plot_neg = data.frame(feature = rownames(coefficients_ridge)[coefficients_ridge_summary$i], 
+                                     Iight = as.numeric(scale(coefficients_ridge_summary$x))) %>%
+                          slice_min(Iight, n = 20) %>%
+                          filter(feature != "(Intercept)") %>%
+                          ggplot(aes(x = reorder(as.factor(feature), Iight), y = Iight)) +
+                          geom_bar(stat = "identity", aes(fill = Iight)) +
+                          paletteer::scale_fill_paletteer_c("scico::berlin") +
+                          theme_bw() +
+                          coord_flip() +
+                          labs(x = "Features",
+                               y = "Iights of Features",
+                               title = "Highest Negative Standardized Iights",
+                               subtitle = "Ridge Model Fit")
+
+plot(coefficients_ridge_plot_pos)
+plot(coefficients_ridge_plot_neg)
+```
+
+In a linear regression with ridge regularization, as noticeable in the plots, for positive reviews, the most important predictor seems to be words such as "disheartened", "exclusion", "disgust" and "misread". On the other hand, words such as "manipulation", "hunger", "disastrous" and "apocalyptic" seem to indicate a negative or a unsatisfied review more than others. 
+
+Overall, based on the extracted features from the lasso and ridge regression, I can observe that theoretically and intuitively speaking lasso makes more sense. As ridge is probably not so good at predicting positive reviews as it showcased that words that usually have negative connotation Ire the best predictors for such reviews. Whereas for the negative reviews I can see even some overlap betIen the ridge and the lasso regression, for instance in the word "manipulation" which is the most important feature in both of the models. 
+
+
+In order to further elaborate and discuss the outcomes of these two models the next part will compare the accuracy, specificity, and sensitivity of the two models. 
+
+# 5.2 Model evaluation
+
+
+To evaluate the model you can look at various predictive performance measures. Given that Area under the curve (AUC) is the performance measure used to rate your submission in this competition, it is of special importance. But other performance indicators are interesting to look at too. Consider tabulating and/or graphing performance differences from tuning and different models.
+
+Try to understand what the model does, and consider drawing some conclusions.
+
+### Predictions
+
+Showing the Model Performance:
+
+```{r}
+# Performance evaluation
+
+# Predict with Lasso
+predictions_lasso_train = predict(lasso_fit_train, train_dataX, 
+                                  s = lasso_fit_train$lambda.min, type = "class")  %>%
+                          as.factor()
+
+
+# Create a Confusion Matrix for Train Data (Lasso)
+Lasso_Matrix = caret::confusionMatrix(predictions_lasso_train, as.factor(y_train))
+
+
+# Predict with Ridge
+predictions_ridge_train = factor(predict(ridge_fit_train, train_dataX, 
+                                         s = ridge_fit_train$lambda.min, type = "class"), 
+                                levels = c(0,1)) 
+   
+
+
+# Create a Confusion Matrix for Train Data (Ridge)
+Ridge_Matrix = caret::confusionMatrix(predictions_ridge_train, as.factor(y_train))
+
+
+```
+
+### Model Comparison
+
+```{r}
+# Find best model
+mods = list(Ridge = ridge_fit_train, Lasso = lasso_fit_train)
+
+# Accuracy
+accuracy_ridge = mean(predictions_ridge_train == y_train)
+accuracy_lasso = mean(predictions_lasso_train == y_train)
+
+# Sensitivity
+sensitivity_ridge = Ridge_Matrix$byClass[[1]]
+sensitivity_lasso = Lasso_Matrix$byClass[[1]]
+
+# Specificity
+specificity_ridge = Ridge_Matrix$byClass[[2]]
+specificity_lasso = Lasso_Matrix$byClass[[2]]
+
+# Model Comparison
+mod_comp_df = data.frame(Model = c("Ridge", "Lasso"),
+           Accuracy = c(accuracy_ridge, accuracy_lasso),
+           Sensitivity = c(sensitivity_ridge, sensitivity_lasso),
+           Specificity = c(specificity_ridge, specificity_lasso))
+# Plot
+acc_plot = mod_comp_df %>%
+    ggplot(aes(x = Model, y = Accuracy, fill = Model)) +
+    geom_col(position = "dodge") +
+    scale_fill_manual(values = c("#66CC99", "#9999CC")) +
+    coord_flip() +
+    theme(panel.background = element_blank())
+sens_plot = mod_comp_df %>%
+    ggplot(aes(x = Model, y = Sensitivity, fill = Model)) +
+    geom_col(position = "dodge") +
+    scale_fill_manual(values = c("#66CC99", "#9999CC")) +
+    coord_flip() +
+    theme(panel.background = element_blank())
+spec_plot = mod_comp_df %>%
+    ggplot(aes(x = Model, y = Specificity, fill = Model)) +
+    geom_col(position = "dodge") +
+    scale_fill_manual(values = c("#66CC99", "#9999CC")) +
+    coord_flip() +
+    theme(panel.background = element_blank())
+
+
+plot_grid(acc_plot, sens_plot, spec_plot, ncol = 1)
+
+print("Accuracy")
+print(accuracy_ridge)
+print(accuracy_lasso)
+
+print("Specificity")
+print(specificity_ridge)
+print(specificity_lasso)
+
+print("Sensitivity")
+print(sensitivity_ridge)
+print(sensitivity_lasso)
+```
+
+# Model Comparison Evaluation
+I decided to keep the Lasso Model, since it has the highest scores on both accuracy and sensitivity. Although ridge has a somewhat similar accuracy and a better specificity, the difference in sensitivity is much higher in favour of the lasso model. Thus, based on this analysis and the one before with the features and their Iights I decided to use the lasso model. 
+
+
+# 6. Submitting predictions for the Kaggle competition
+
+```{r}
+# Creating Predictions for the Test Data
+predictions <- predict(lasso_fit_train, test_dataX, s = 'lambda.min', type = 'response') 
+            
+# Creating a Submission File
+as_tibble(predictions, rownames = "Id") %>% 
+  rename(Prediction = '1') %>% 
+  mutate(Id = as.numeric(Id)) %>% 
+  arrange(Id) %>% 
+  write_csv("submission.csv")
+
+
+
+nrow(predictions)
+```
+
+
