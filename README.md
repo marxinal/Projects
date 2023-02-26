@@ -212,7 +212,8 @@ Features derived from the speech transcript texts:
 <ins>Results:</ins>
 My model explained 76% of the variance in Big Five Personality Traits scores using a test set.
 
-<ins>References:</ins>
+References:
+** **
 
 Christian, H., Suhartono, D., Chowanda, A., & Zamli, K. Z. (2021). Text based personality prediction from multiple social media data sources using pre-trained language model and model averaging. Journal of Big Data, 8(1). https://doi.org/10.1186/s40537-021-00459-1
 
@@ -309,7 +310,8 @@ Features of specific sentiment words
 
 - The overall model accuracy employed on a test set was 85%.
 
-<ins>References</ins>
+References
+** **
 
 Tan, C. M., Wang, Y. F., & Lee, C. D. (2002). The use of bigrams to enhance text categorization. Information Processing & Management, 38(4), 529–546. https://doi.org/10.1016/s0306-4573(01)00045-0
 
