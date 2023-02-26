@@ -1,5 +1,5 @@
 
-# Different Projects Using Supervised and Unsupervised Machine Learning Methods
+# Coding Projects Using Supervised and Unsupervised Machine Learning Methods
 
 A detailed **description** of each of the five projects can be found on this website: https://marxinal.github.io/tags/projects/
 
