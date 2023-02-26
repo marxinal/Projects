@@ -162,7 +162,6 @@ Data: The YouTube personality dataset consists of a collection of behavorial fea
 - Agreeableness
 - Openess to Experience
 
-
 <ins>Predictors:</ins> _(Independent Variables/Features)_
 
 The predictors stemmed from three different aspects:
@@ -208,6 +207,120 @@ Features derived from the speech transcript texts:
 - Here I employed a linear model along with stepwise regression methods (using the forward and the hybrid approach). Additionally, an alternative model with non-linear transformations was fitted in order to potentially increase the explained variance, and was thus compared to the primary model that does not violate the assumption of additivity. 
 
 <ins>Model Evaluation and Model Comparison:</ins> 
+- The simple model with no non-linear transformations had the highest explained variance, thus this model was used for prediction purposes.
 
+<ins>Results:</ins>
+My model explained 76% of the variance in Big Five Personality Traits scores using a test set.
+
+</ins>References:</ins>
+
+Christian, H., Suhartono, D., Chowanda, A., & Zamli, K. Z. (2021). Text based personality prediction from multiple social media data sources using pre-trained language model and model averaging. Journal of Big Data, 8(1). https://doi.org/10.1186/s40537-021-00459-1
+
+Lee, C. H., Kim, K., Seo, Y. S., & Chung, C. K. (2007). The Relations Between Personality and Language Use. The Journal of General Psychology, 134(4), 405–413. https://doi.org/10.3200/genp.134.4.405-414
+
+Laserna, C. M., Seih, Y. T., & Pennebaker, J. W. (2014). Um . . . Who Like Says You Know. Journal of Language and Social Psychology, 33(3), 328–338. https://doi.org/10.1177/0261927x14526993
+
+Mehta, Y., Fatehi, S., Kazameini, A., Stachl, C., Cambria, E., & Eetemadi, S. (2020). Bottom-Up and Top-Down: Predicting Personality with Psycholinguistic and Language Model Features. 2020 IEEE International Conference on Data Mining (ICDM). Published. https://doi.org/10.1109/icdm50108.2020.00146
+
+Scully, I. D., & Terry, C. P. (2011). Self-Referential Memory for the Big-Five Personality Traits. Psi Chi Journal of Psychological Research, 16(3), 123–128. https://doi.org/10.24839/1089-4136.jn16.3.123
+
+## Fourth Project
+
+### Title: Customer Satisfaction from Amazon Reviews 
+
+Description: Here I tried to build a classifier that automatically recognizes customer satisfaction from textual reviews of baby products that were sold on Amazon.com.
+
+Data: Reviews and 5 star ratings were collected by Amazon on their site by inviting customers to enter a review of a product that had bought. The extracted data from Amazon contains: the item described, the review text as a (long) string, and a numeric rating. Customers are assumed the be “satisfied” if the numeric rating is greater than the midpoint of the scale.
+
+<ins>Dependent Variable:</ins> _(Satisfaction)_
+
+Level of satisfaction of customers, ranging from 1 to 5.
+
+<ins>Predictors:</ins>  (Independent Variables/Features)
+
+Features were extracted from tokenized (words) text transcripts.
+
+The constructed features:
+
+- Term Frequency - Inverse Document Frequency Features
+- The TF-IDF based on single words, without filtering for the stopwords
+- The TF-IDF based on bigrams, which we also did not filter on stopwords. We found this to be a very useful feature for sentiment analysis (Tan, Wang & Lee, 2002).
+- The TF-IDF based on trigrams also without filtering for the stopwords. Again, trigrams were also found to be useful feature for sentiment analysis (Wu, Li, & Xu, 2006).
+
+The following process was employed:
+
+- document occurence:
+  - 0-1 encoding of the presence or absence of a token t in a document n (here: review)
+- token counts:
+  - simple counts of each token t within documents (resulting in a document by term matrix, or DTM)
+- term frequency (TF):
+  - then calculate the relative frequency of a token t within a document n
+- inverse document frequency (IDF):
+  - inverse the relative frequency with which a term occurs among the N documents, expressed on a log scale (a measure of ‘surprise’) calculated by
+    dividng the number of documents that contain the token _t_over the number of total number of documents (N).
+- the TFIDF:
+  - the product of TF and IDF
+   
+The motivation for TF is simply that the more often a token t occurs in a document, the more likely it is that the topic of the document is closely related to that token. A problem of TF is that it does not take into account that certain words simply occur more frequently because of their role in language (such as ‘a’, ‘but’, etc.).
+
+The motivation for the IDF_t is that the more wide spread the use of a token t is among all documents, the less likely it conveys information about the topic of any particular document. Hence, the more surprising a word is, the more likely it conveys information about the topic of the document in which it is found.
+
+Thus, the TFIDF banks on both of these ideas and quantifies the important of a term for a given document.
+
+Features regarding counts of the Reviews
+- Word Count per Review
+- Sentence Count per Review (Ren & Hong, 2017)
+
+Sentiment Features
+- The NRC sentiment score
+  - Lists associations of words with eight emotions (anger, fear, anticipation, trust, surprise, sadness, joy, and disgust) and two sentiments (negative
+    and positive)
+- The Bing sentiment score
+  - The bing lexicon categorizes words in a binary fashion into positive and negative categories.
+- The Afinn sentiment score
+  - The Afinn lexicon assignes words with a score between -5 and 5, where negative scores indicate a negative sentiment and positive scores indicate a
+    positive sentiment.
+    
+Features of specific sentiment words
+- Swear Words
+  - Another valid linguistic correlate of sentiments is swearing (Hashimi, Hafez & Mathkour, 2015)
+- Negation Words Feature
+  - Negations are words like no, not, and never. When people want to express the opposite meaning of a particular word or sentence, this is done by
+  inserting a specific negation. Negating words have a correlation with other words in that sentence and we assume they are useful for predicting the
+  sentiments.
+- Function Words (Functors) Feature T
+  - These are words that have little lexical meaning or that have ambiguous meaning which express grammatical relationships among other words within a
+  sentence, or specify the attitude or mood of the speaker. Therefore we assumed this to be a feature of use.
+- Pronouns Feature
+  - A pronoun is a word that takes the place of a noun. So words like: “I”, “me”, “he”, “she”, “herself”, “you”, “everybody” etc.
+- Preposition Feature
+  - These are words or a group of words that are used before a noun, pronoun, or noun phrase to show direction, time, place, location, spatial
+  relationships, or to introduce an object. These are words like “in,” “at,” “on,” “of,” and “to etc. (Liang, Sun, Sun, & Gao, 2017)
+  
+<ins>Methods and Model employed:</ins> 
+
+- Here Lasso and Ridge Regression were used. And they were compared based on their accuracy, sensitivity, and specificity.
+
+<ins>Model Comparison</ins> 
+
+- I decided to keep the Lasso Model, since it has the highest scores on both accuracy and sensitivity. Although ridge has a somewhat similar accuracy and a better specificity, the difference in sensitivity is much higher in favour of the lasso model. Thus, based on this analysis and the one before with the features and their weights I decided to use the lasso model.
+
+<ins>Results:</ins> 
+
+- The overall model accuracy employed on a test set was 85%.
+
+<ins>References</ins>
+
+Tan, C. M., Wang, Y. F., & Lee, C. D. (2002). The use of bigrams to enhance text categorization. Information Processing & Management, 38(4), 529–546. https://doi.org/10.1016/s0306-4573(01)00045-0
+
+Hashimi, H., Hafez, A., & Mathkour, H. (2015). Selection criteria for text mining approaches. Computers in Human Behavior, 51, 729–733. https://doi.org/10.1016/j.chb.2014.10.062
+
+Wu, S. T., Li, Y., & Xu, Y. (2006). Deploying Approaches for Pattern Refinement in Text Mining. Sixth International Conference on Data Mining (ICDM’06). Published. https://doi.org/10.1109/icdm.2006.50
+
+Liang, H., Sun, X., Sun, Y., & Gao, Y. (2017). Text feature extraction based on deep learning: a review. EURASIP Journal on Wireless Communications and Networking, 2017(1). https://doi.org/10.1186/s13638-017-0993-1
+
+Ren, G., & Hong, T. (2017). Investigating Online Destination Images Using a Topic-Based Sentiment Analysis Approach. Sustainability, 9(10), 1765. https://doi.org/10.3390/su9101765
+
+Zhang, L., Hua, K., Wang, H., Qian, G., & Zhang, L. (2014). Sentiment Analysis on Reviews of Mobile Users. Procedia Computer Science, 34, 458–465. https://doi.org/10.1016/j.procs.2014.07.013
 
 
