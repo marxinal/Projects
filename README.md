@@ -334,12 +334,15 @@ Description: Using data extracted from images to build an algorithm that is able
 Data:
 
 - Where do the data come from? (To which population will results generalize?)
+
 The data came from the CK+ dataset. The obtained results from this statistical analysis will generalize to black & white photos representative of four emotions. Those are sadness, happiness, disgust, and anger. When taking into consideration the actual generalizability of the data, it is arguable that this dataset will not be able to generalize well to children and infants, but also other non Euro-American faces. The reason being that 81% of the dataset contains only Euro-American faces, and only 13% Afro-American and 6% other groups. Likewise, only adult faces were used for training purposes, in particular pariticipants were 18 to 50 years of age (Lucey, et al., 2010).
 
 - What are candidate machine learning methods? (models? features?)
+
 Possible machine learning algorithms could be QDA, LDA, KNN, Multinomial Regression, Random Forrest, Ridge and Lasso regression. Some of them were used here, and some were left out due to high computational (CPU and RAM) demands.
 
 - What is the Bayes' error bound?
+
 Literature suggests that Facial Recognition Algorithms can reach almost perfection with a 99.97% accuracy rate. Whereas, if looking specifically at recognizing one of the four aforementioned emotions, Mollahosseini et al. (2016), suggests the inter rater reliability for recognition is 79.6% for happiness, 69.7% for saddnes, 67.6% for disgust, and 62.3% anger among in total 11 facial expressions. So taken together, our Bayes' error bound should probably be somewhere around 85-90% for the present data set.
 Derived from: https://www.csis.org/blogs/technology-policy-blog/how-accurate-are-facial-recognition-systems-–-and-why-does-it-matter
 
@@ -403,7 +406,7 @@ Before fitting a model, I first split the data into a training and validation se
 - Linear Discriminant Analysis
 - Quadratic Discriminant Analysis
 - Bagging
-- 
+
 Based on the accuracies the SVM performs the best compared to the other methods, so I used that as my final model. Also QDA performs better than LDA which might due to the size of the data set, or due to the non-linear data.
 
 <ins>Results:</ins>
