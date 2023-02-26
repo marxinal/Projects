@@ -212,7 +212,7 @@ Features derived from the speech transcript texts:
 <ins>Results:</ins>
 My model explained 76% of the variance in Big Five Personality Traits scores using a test set.
 
-</ins>References:</ins>
+<ins>References:</ins>
 
 Christian, H., Suhartono, D., Chowanda, A., & Zamli, K. Z. (2021). Text based personality prediction from multiple social media data sources using pre-trained language model and model averaging. Journal of Big Data, 8(1). https://doi.org/10.1186/s40537-021-00459-1
 
